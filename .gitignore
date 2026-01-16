@@ -1,0 +1,14 @@
+Library/
+Temp/
+Obj/
+Build/
+Builds/
+Logs/
+UserSettings/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+.vs/
+.vsconfig
+.gradle/
