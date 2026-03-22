@@ -1,21 +1,14 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
 
-public class Deck : MonoBehaviour
+public class TinPattiDeck : MonoBehaviour
 {
     public List<Card> cards = new List<Card>();
-    public List<Sprite> cardSprites;
-
-    private List<Card> discardPile = new List<Card>();
-
-    public int CardsRemaining => cards.Count;
-    public int DiscardCount => discardPile.Count;
+    public List<Sprite> cardSprites; // Assign 52 sprites here
 
     public void CreateDeck()
     {
         cards.Clear();
-        discardPile.Clear();
-
         string[] ranks = { "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A" };
         string[] suits = { "Hearts", "Diamonds", "Clubs", "Spades" };
 
@@ -26,6 +19,13 @@ public class Deck : MonoBehaviour
             {
                 if (spriteIndex < cardSprites.Count)
                 {
+                    // DEBUG: Check if sprite is missing
+                    if (cardSprites[spriteIndex] == null)
+                    {
+                        Debug.LogError($"[DECK ERROR] Sprite is missing in Slot {spriteIndex}!");
+                    }
+
+                    // Create the card using your constructor: (Rank, Suit, Sprite)
                     cards.Add(new Card(r, s, cardSprites[spriteIndex]));
                     spriteIndex++;
                 }
@@ -45,27 +45,13 @@ public class Deck : MonoBehaviour
         }
     }
 
-    public void AddToDiscard(Card c)
-    {
-        if (c != null) discardPile.Add(c);
-    }
-
-    public void RemoveFromDiscard(Card c)
-    {
-        if (c != null) discardPile.Remove(c);
-    }
-
-    public void ReshuffleFromDiscard()
-    {
-        if (discardPile.Count == 0) return;
-        cards.AddRange(discardPile);
-        discardPile.Clear();
-        Shuffle();
-    }
-
     public Card DrawCard()
     {
-        if (cards.Count == 0) return null;
+        if (cards.Count == 0)
+        {
+            Debug.LogError("[DECK ERROR] Trying to draw but deck is EMPTY!");
+            return null;
+        }
         Card c = cards[0];
         cards.RemoveAt(0);
         return c;

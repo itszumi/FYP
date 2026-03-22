@@ -12,7 +12,8 @@ GameObject:
   - component: {fileID: 2443915187197538606}
   - component: {fileID: 8765589836186278038}
   - component: {fileID: 7280148779804642096}
-  - component: {fileID: 5815865811699869553}
+  - component: {fileID: 4731817282041110501}
+  - component: {fileID: 1240049159980544669}
   m_Layer: 5
   m_Name: CardPrefab
   m_TagString: Untagged
@@ -67,9 +68,9 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 0}
+  m_Sprite: {fileID: 3312308696948545910, guid: 4e4fc2b97b2b3064f9d338b5afde39e3, type: 3}
   m_Type: 0
-  m_PreserveAspect: 0
+  m_PreserveAspect: 1
   m_FillCenter: 1
   m_FillMethod: 4
   m_FillAmount: 1
@@ -121,9 +122,9 @@ MonoBehaviour:
   m_OnClick:
     m_PersistentCalls:
       m_Calls:
-      - m_Target: {fileID: 5815865811699869553}
+      - m_Target: {fileID: 0}
         m_TargetAssemblyTypeName: CardDisplay, Assembly-CSharp
-        m_MethodName: OnClick
+        m_MethodName: 
         m_Mode: 1
         m_Arguments:
           m_ObjectArgument: {fileID: 0}
@@ -133,7 +134,25 @@ MonoBehaviour:
           m_StringArgument: 
           m_BoolArgument: 0
         m_CallState: 2
---- !u!114 &5815865811699869553
+--- !u!114 &4731817282041110501
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2318393253481157829}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cdd884e5794bd8d458aa98d0937449e7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  cardData:
+    suit: 
+    rank: 
+    cardSprite: {fileID: 0}
+  myImage: {fileID: 8765589836186278038}
+  cardBackSprite: {fileID: 3312308696948545910, guid: 4e4fc2b97b2b3064f9d338b5afde39e3, type: 3}
+--- !u!114 &1240049159980544669
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -151,3 +170,5 @@ MonoBehaviour:
     cardSprite: {fileID: 0}
   myImage: {fileID: 8765589836186278038}
   cardBackSprite: {fileID: 3312308696948545910, guid: 4e4fc2b97b2b3064f9d338b5afde39e3, type: 3}
+  isInteractable: 0
+  isOnFloor: 0
