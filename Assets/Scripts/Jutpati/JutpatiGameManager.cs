@@ -1,8 +1,9 @@
-﻿using System.Collections;
+﻿
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
-using System.Linq;
 
 public class JutpatiGameManager : MonoBehaviour
 {
@@ -201,6 +202,7 @@ public class JutpatiGameManager : MonoBehaviour
         lastDiscardedDisplay.Setup(c, this, true, true);
         lastDiscardedDisplay.isOnFloor = true;
 
+
         var img = discardObj.GetComponent<Image>();
         if (img != null) img.color = discardHighlight;
     }
@@ -322,6 +324,10 @@ public class JutpatiGameManager : MonoBehaviour
             foreach (var kvp in allHandUI[i])
                 kvp.Value.GetComponent<Image>().sprite = kvp.Key.cardSprite;
         }
+        if (message.Contains("YOU WIN"))
+            CurrencyManager.AddCoins(200);
+        else if (message.Contains("BOT"))
+            CurrencyManager.AddCoins(-200);
     }
 
     void UpdateTurnUI()

@@ -1,4 +1,5 @@
-﻿using System.Collections;
+﻿
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -83,5 +84,10 @@ public class TinPattiManager : MonoBehaviour
 
         statusText.text = (winnerIndex == 0) ? "YOU WIN!" : "BOT " + winnerIndex + " WINS!";
         statusText.color = Color.yellow;
+
+        if (statusText.text.Contains("YOU WIN"))
+            CurrencyManager.AddCoins(200);
+        else if (statusText.text.Contains("BOT"))
+            CurrencyManager.AddCoins(-200);
     }
 }
