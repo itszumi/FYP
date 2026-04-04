@@ -195,7 +195,7 @@ public class JutpatiGameManager : MonoBehaviour
         if (lastDiscardedDisplay != null)
         {
             var oldImg = lastDiscardedDisplay.GetComponent<Image>();
-            if (oldImg != null) oldImg.color = Color.white;
+            if (oldImg != null) oldImg.color = discardHighlight;
         }
 
         lastDiscardedDisplay = discardObj.GetComponent<CardDisplay>();
@@ -204,7 +204,7 @@ public class JutpatiGameManager : MonoBehaviour
 
 
         var img = discardObj.GetComponent<Image>();
-        if (img != null) img.color = discardHighlight;
+        if (img != null) img.color = Color.white;
     }
     // Bot should take discard ONLY if it makes a pair (jut)
     bool BotShouldTakeDiscard(int botIndex, Card topCard)

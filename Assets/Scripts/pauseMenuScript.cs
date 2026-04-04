@@ -23,7 +23,7 @@ public class pauseMenuScript : MonoBehaviour
 
     public void goHome() { 
         Time.timeScale = 1f;
-        UnityEngine.SceneManagement.SceneManager.LoadScene(0);
+        UnityEngine.SceneManagement.SceneManager.LoadScene(1);
     }
 
     // Update is called once per frame

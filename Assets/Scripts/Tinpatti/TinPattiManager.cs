@@ -1,4 +1,4 @@
-﻿
+
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -11,6 +11,9 @@ public class TinPattiManager : MonoBehaviour
     public Transform[] playerAreas;
     public Text statusText;
     public Button showButton;
+
+    [Header("Coin UI to refresh after result (optional)")]
+    public CurrencyUI currencyUI;
 
     private List<List<Card>> allHands = new List<List<Card>>();
     private List<List<CardDisplayTinPatti>> allDisplays = new List<List<CardDisplayTinPatti>>();
@@ -85,9 +88,13 @@ public class TinPattiManager : MonoBehaviour
         statusText.text = (winnerIndex == 0) ? "YOU WIN!" : "BOT " + winnerIndex + " WINS!";
         statusText.color = Color.yellow;
 
-        if (statusText.text.Contains("YOU WIN"))
-            CurrencyManager.AddCoins(200);
-        else if (statusText.text.Contains("BOT"))
-            CurrencyManager.AddCoins(-200);
+        if (winnerIndex == 0)
+            CurrencyManager.OnWin();
+        else
+            CurrencyManager.OnLose();
+
+        // Refresh on-screen coin display
+        if (currencyUI != null)
+            currencyUI.Refresh();
     }
 }
