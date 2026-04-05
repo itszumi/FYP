@@ -21,7 +21,7 @@ EditorBuildSettings:
     path: Assets/Scenes/Jutpatti.unity
     guid: f824e5120b731924ea82cc7413271c4c
   - enabled: 1
-    path: Assets/Scenes/Dhumbal.unity
+    path: Assets/Scenes/Gulamchor.unity
     guid: 85db3f9a52f61774f99175528c1fbacc
   - enabled: 1
     path: Assets/Scenes/TestyourLuck.unity
