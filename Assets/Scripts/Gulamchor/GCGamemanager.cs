@@ -1,30 +1,6 @@
-﻿// GCGameManager.cs
-// Gulam Chor — 1 human (Player 0) vs 4 AI bots.
-//
-// Mirrors your JutpatiGameManager structure exactly:
-//   - allHands        = List<List<Card>>
-//   - allHandUI       = List<Dictionary<Card, GameObject>>
-//   - cardPrefab      = GCCardDisplay prefab
-//   - handAreas[]     = 5 Transforms (0 = human bottom, 1-4 = AI positions)
-//   - BotTurnsLoop()  = IEnumerator like Jutpati
-//
-// ── Scene Hierarchy ───────────────────────────────────────────────────────────
-//   GCGameManager (this script + GCDeck component)
-//   Canvas
-//     HandArea0          Human cards (bottom)
-//     HandArea1-4        AI cards (top/sides) — show card backs
-//     FaceDownPickPanel  Shown when human must pick from an AI
-//       PickPromptText   TMP "Pick a card from CPU X"
-//       FaceDownArea     cards spawn here
-//     StatusText         TMP — turn info
-//     MessageText        TMP — transient pair/pick messages
-//     PlayerInfoPanel    5 sub-panels (name + card count)
-//     GameOverPanel
-//       GameOverTitle    TMP
-//       GameOverDetails  TMP
-//       RestartButton
-//       MainMenuButton
-// ─────────────────────────────────────────────────────────────────────────────
+﻿// GCGameManager.cs — Gulam Chor full implementation
+// Human turn: target bot hand ZOOMS in place, cards become clickable
+// Pairs animate to center throw pile with slide+rotation
 
 using System.Collections;
 using System.Collections.Generic;
@@ -36,103 +12,66 @@ using TMPro;
 
 public class GCGameManager : MonoBehaviour
 {
-    // ── Inspector References ──────────────────────────────────────────────────
-
     [Header("Deck")]
     public GCDeck deck;
-
     [Header("Card Prefab")]
-    [Tooltip("Prefab with GCCardDisplay + Button + Image — same as your Jutpati cardPrefab.")]
     public GameObject cardPrefab;
-
-    [Header("Hand Areas (0 = Human, 1-4 = CPU)")]
-    [Tooltip("5 Transforms. Index 0 = human hand at bottom. 1-4 = AI hands around the table.")]
-    public Transform[] handAreas;   // length 5
-
-    [Header("Face-Down Pick Panel")]
-    [Tooltip("Panel shown when human must click a face-down card from an AI.")]
-    public GameObject faceDownPickPanel;
-    public Transform faceDownArea;        // cards spawn here
-    public TextMeshProUGUI pickPromptText;
-
-    [Header("Status UI")]
-    public TextMeshProUGUI statusText;
-    public TextMeshProUGUI messageText;
-
-    [Header("Player Info Panels (0=Human, 1-4=CPU)")]
-    [Tooltip("5 panels showing player name + card count. Leave null to skip.")]
-    public TextMeshProUGUI[] playerNameLabels;    // length 5
-    public TextMeshProUGUI[] playerCardCountLabels; // length 5
-    public Image[] playerTurnHighlights;  // length 5 — lit when it's their turn
-
+    [Header("Hand Areas (0=Human, 1-4=Bot)")]
+    public Transform[] handAreas;
+    [Header("Center Throw Pile")]
+    public RectTransform throwPile;
+    [Header("Turn Text")]
+    public TextMeshProUGUI turnText;
+    [Header("Player Card Count Labels (length 5, optional)")]
+    public TextMeshProUGUI[] playerCardCountLabels;
     [Header("Game Over")]
     public GameObject gameOverPanel;
     public TextMeshProUGUI gameOverTitle;
     public TextMeshProUGUI gameOverDetails;
     public Button restartButton;
     public Button mainMenuButton;
+    [Header("Timing")]
+    public float dealPairDelay = 0.35f;
+    public float aiThinkDelay = 1.1f;
+    public float aiPickDelay = 0.5f;
+    public float slideAnimDuration = 0.4f;
+    public float handScaleUp = 1.4f;
+    public float handScaleDuration = 0.25f;
 
-    [Header("AI Settings")]
-    public float aiPickDelay = 1.2f;  // seconds before AI picks
-    public float aiResultDelay = 0.8f;  // seconds after AI picks (show result)
-
-    // ── Runtime State ─────────────────────────────────────────────────────────
-
-    // allHands[i] = cards in player i's hand
     private List<List<Card>> allHands = new List<List<Card>>();
-
-    // allHandUI[i][card] = the spawned GameObject for that card
     private List<Dictionary<Card, GameObject>> allHandUI = new List<Dictionary<Card, GameObject>>();
-
-    // Which players are still active (have cards)
     private List<int> activePlayers = new List<int>();
-
-    private int currentTurnIndex = 0;   // index into activePlayers
+    private int currentTurnIndex = 0;
     private bool gameEnded = false;
     private bool waitingForHuman = false;
-
-    // The AI player the human is currently picking from
+    private bool waitingForPair = false;
     private int pickTargetIndex = -1;
+    private Card pickedCard = null;
+    private Card pairMatchCard = null;
 
-    private const int PLAYER_COUNT = 5;  // 0 = human, 1-4 = AI
-
-    // ── Unity Lifecycle ───────────────────────────────────────────────────────
+    private const int PLAYER_COUNT = 5;
 
     void Start()
     {
-        if (restartButton != null) restartButton.onClick.AddListener(RestartGame);
-        if (mainMenuButton != null) mainMenuButton.onClick.AddListener(() => SceneManager.LoadScene("MainMenu"));
+        restartButton?.onClick.AddListener(RestartGame);
+        mainMenuButton?.onClick.AddListener(() => SceneManager.LoadScene("MainMenu"));
         if (gameOverPanel != null) gameOverPanel.SetActive(false);
-        if (faceDownPickPanel != null) faceDownPickPanel.SetActive(false);
-        if (messageText != null) messageText.gameObject.SetActive(false);
-
-        SetupGame();
+        if (turnText != null) turnText.gameObject.SetActive(false);
+        StartCoroutine(RunGame());
     }
 
-    // ── Setup ─────────────────────────────────────────────────────────────────
-
-    public void SetupGame()
+    IEnumerator RunGame()
     {
-        StopAllCoroutines();
+        yield return StartCoroutine(DealPhase());
+        yield return new WaitForSeconds(0.6f);
+        yield return StartCoroutine(GamePhase());
+    }
 
-        gameEnded = false;
-        waitingForHuman = false;
-        currentTurnIndex = 0;
-        pickTargetIndex = -1;
+    // ── PHASE 1: DEAL ─────────────────────────────────────────────────────────
 
-        // Clear all hand areas
-        foreach (Transform area in handAreas)
-            foreach (Transform child in area) Destroy(child.gameObject);
-
-        if (faceDownPickPanel != null) faceDownPickPanel.SetActive(false);
-        if (gameOverPanel != null) gameOverPanel.SetActive(false);
-        if (messageText != null) messageText.gameObject.SetActive(false);
-
-        // Init data structures
-        allHands.Clear();
-        allHandUI.Clear();
-        activePlayers.Clear();
-
+    IEnumerator DealPhase()
+    {
+        allHands.Clear(); allHandUI.Clear(); activePlayers.Clear();
         for (int i = 0; i < PLAYER_COUNT; i++)
         {
             allHands.Add(new List<Card>());
@@ -140,101 +79,74 @@ public class GCGameManager : MonoBehaviour
             activePlayers.Add(i);
         }
 
-        // Build and deal 51-card deck
         deck.CreateDeck();
-        DealCards();
+        var allCards = new List<Card>(deck.cards);
+        deck.cards.Clear();
+        for (int i = 0; i < allCards.Count; i++)
+            allHands[i % PLAYER_COUNT].Add(allCards[i]);
 
-        // Remove initial pairs from ALL players' hands
-        for (int i = 0; i < PLAYER_COUNT; i++)
-            RemovePairsFromHand(i);
+        // Show all cards face-up initially
+        RebuildAllHandUI(dealPhase: true);
+        SetTurnText("Removing pairs...");
+        yield return new WaitForSeconds(0.8f);
 
-        // Remove players who already emptied their hand
-        RemoveEmptyPlayers();
-
-        // Rebuild all hand UI after pair removal
-        RebuildAllHandUI();
-
-        UpdatePlayerInfoPanels();
-        SetStatus(GetTurnStatusText());
-
-        Debug.Log("[GC] Game started. Turn: " + CurrentPlayer);
-        StartCoroutine(TurnLoop());
-    }
-
-    // ── Deal cards round-robin ────────────────────────────────────────────────
-
-    void DealCards()
-    {
-        int i = 0;
-        while (deck.CardsRemaining > 0)
+        // Collect all pairs
+        var allPairs = new List<(int player, Card c1, Card c2)>();
+        for (int p = 0; p < PLAYER_COUNT; p++)
         {
-            Card c = deck.DrawCard();
-            if (c != null)
-                allHands[i % PLAYER_COUNT].Add(c);
-            i++;
-        }
-    }
-
-    // ── Pair removal ─────────────────────────────────────────────────────────
-
-    void RemovePairsFromHand(int playerIndex)
-    {
-        List<Card> hand = allHands[playerIndex];
-        bool found = true;
-
-        while (found)
-        {
-            found = false;
-            for (int i = 0; i < hand.Count; i++)
+            var hand = allHands[p];
+            bool found = true;
+            while (found)
             {
-                for (int j = i + 1; j < hand.Count; j++)
-                {
-                    if (hand[i].rank == hand[j].rank)
-                    {
-                        Debug.Log($"[GC] {PlayerName(playerIndex)} removed pair: {hand[i].rank}");
-                        hand.RemoveAt(j);
-                        hand.RemoveAt(i);
-                        found = true;
-                        break;
-                    }
-                }
-                if (found) break;
+                found = false;
+                for (int i = 0; i < hand.Count && !found; i++)
+                    for (int j = i + 1; j < hand.Count && !found; j++)
+                        if (hand[i].rank == hand[j].rank)
+                        {
+                            allPairs.Add((p, hand[i], hand[j]));
+                            hand.RemoveAt(j); hand.RemoveAt(i);
+                            found = true;
+                        }
             }
         }
-    }
 
-    // ── Build UI for all hands ────────────────────────────────────────────────
-
-    void RebuildAllHandUI()
-    {
-        for (int i = 0; i < PLAYER_COUNT; i++)
+        // Animate all pairs — simultaneously per player
+        foreach (var group in allPairs.GroupBy(x => x.player))
         {
-            // Clear existing UI
-            foreach (Transform child in handAreas[i]) Destroy(child.gameObject);
-            allHandUI[i].Clear();
-
-            foreach (Card c in allHands[i])
-                SpawnCardInHand(i, c);
+            foreach (var (player, c1, c2) in group)
+            {
+                StartCoroutine(SendToThrowPile(player, c1));
+                StartCoroutine(SendToThrowPile(player, c2));
+            }
+            yield return new WaitForSeconds(slideAnimDuration + dealPairDelay);
         }
+
+        yield return new WaitForSeconds(0.4f);
+
+        // Flip bots face-down
+        for (int p = 1; p < PLAYER_COUNT; p++)
+            foreach (var kvp in allHandUI[p])
+                kvp.Value.GetComponent<GCCardDisplay>()?.FlipFaceDown();
+
+        RemoveEmptyPlayers();
+        UpdateCardCounts();
+        SetTurnText("Game starts!");
+        yield return new WaitForSeconds(0.8f);
     }
 
-    void SpawnCardInHand(int playerIndex, Card c)
+    IEnumerator SendToThrowPile(int playerIndex, Card card)
     {
-        GameObject obj = Instantiate(cardPrefab, handAreas[playerIndex]);
-        GCCardDisplay disp = obj.GetComponent<GCCardDisplay>();
-
-        if (playerIndex == 0)
-            disp.SetupFaceUp(c, this);    // human sees their own cards
-        else
-            disp.SetupFaceUp(c, this);    // AI cards show face-up in their area
-                                          // (they'll show face-down only in the pick panel)
-
-        allHandUI[playerIndex][c] = obj;
+        if (!allHandUI[playerIndex].ContainsKey(card)) yield break;
+        var obj = allHandUI[playerIndex][card];
+        var disp = obj.GetComponent<GCCardDisplay>();
+        allHandUI[playerIndex].Remove(card);
+        obj.transform.SetParent(throwPile.parent, worldPositionStays: true);
+        if (disp != null) yield return StartCoroutine(disp.SlideToCenter(throwPile, slideAnimDuration));
     }
 
-    // ── Main turn loop (mirrors BotTurnsLoop in Jutpati) ─────────────────────
+    // ── PHASE 2: GAME ─────────────────────────────────────────────────────────
 
-    IEnumerator TurnLoop()
+    IEnumerator GamePhase()
     {
         while (!gameEnded)
         {
@@ -242,287 +154,293 @@ public class GCGameManager : MonoBehaviour
 
             int current = CurrentPlayer;
             int target = GetPickTarget(current);
-
             if (target == -1) { EndGame(); yield break; }
 
-            SetStatus($"{PlayerName(current)}'s turn — picking from {PlayerName(target)}...");
-            HighlightTurn(current);
+            UpdateCardCounts();
 
             if (current == 0)
             {
-                // ── Human turn ────────────────────────────────────────────
-                ShowFaceDownPickPanel(target);
+                SetTurnText("Your Turn — Pick a card!");
+
+                // Zoom target hand in place and make clickable
+                yield return StartCoroutine(ZoomHand(target, true));
+                MakeHandClickable(target);
+
+                pickTargetIndex = target;
                 waitingForHuman = true;
                 while (waitingForHuman) yield return null;
+
+                yield return StartCoroutine(ZoomHand(target, false));
             }
             else
             {
-                // ── AI turn ───────────────────────────────────────────────
-                yield return new WaitForSeconds(aiPickDelay);
-
-                int pickIndex = Random.Range(0, allHands[target].Count);
-                yield return StartCoroutine(ProcessPick(current, target, pickIndex));
+                SetTurnText($"{PlayerName(current)}'s Turn");
+                yield return new WaitForSeconds(aiThinkDelay);
+                int pick = Random.Range(0, allHands[target].Count);
+                yield return StartCoroutine(BotPick(current, target, pick));
             }
 
-            // Remove players who emptied their hand
             RemoveEmptyPlayers();
-
             if (activePlayers.Count <= 1) { EndGame(); yield break; }
 
             AdvanceTurn();
-            UpdatePlayerInfoPanels();
-            SetStatus(GetTurnStatusText());
-
+            UpdateCardCounts();
             yield return new WaitForSeconds(0.2f);
         }
     }
 
-    // ── Face-down pick panel ──────────────────────────────────────────────────
-
-    void ShowFaceDownPickPanel(int targetPlayerIndex)
+    IEnumerator ZoomHand(int playerIndex, bool zoomIn)
     {
-        pickTargetIndex = targetPlayerIndex;
-
-        // Clear old cards
-        foreach (Transform child in faceDownArea) Destroy(child.gameObject);
-
-        if (pickPromptText != null)
-            pickPromptText.text = $"Pick a card from {PlayerName(targetPlayerIndex)}!";
-
-        List<Card> targetHand = allHands[targetPlayerIndex];
-        for (int i = 0; i < targetHand.Count; i++)
+        if (handAreas == null || playerIndex >= handAreas.Length) yield break;
+        Transform hand = handAreas[playerIndex];
+        float start = hand.localScale.x;
+        float end = zoomIn ? handScaleUp : 1f;
+        float e = 0f;
+        while (e < handScaleDuration)
         {
-            int capturedIndex = i;
-            GameObject obj = Instantiate(cardPrefab, faceDownArea);
-            GCCardDisplay disp = obj.GetComponent<GCCardDisplay>();
-            disp.SetupFaceDown(targetHand[i], this, capturedIndex);
+            e += Time.deltaTime;
+            float s = Mathf.Lerp(start, end, e / handScaleDuration);
+            hand.localScale = new Vector3(s, s, 1f);
+            yield return null;
         }
-
-        faceDownPickPanel.SetActive(true);
+        hand.localScale = new Vector3(end, end, 1f);
     }
 
-    // ── Called by GCCardDisplay when human clicks a face-down card ────────────
+    void MakeHandClickable(int playerIndex)
+    {
+        var hand = allHands[playerIndex];
+        for (int i = 0; i < hand.Count; i++)
+        {
+            if (!allHandUI[playerIndex].ContainsKey(hand[i])) continue;
+            int idx = i;
+            allHandUI[playerIndex][hand[i]].GetComponent<GCCardDisplay>()
+                ?.SetupFaceDown(hand[i], this, idx);
+        }
+    }
+
+    void ResetHandNonClickable(int playerIndex)
+    {
+        foreach (var kvp in allHandUI[playerIndex])
+            kvp.Value.GetComponent<GCCardDisplay>()?.SetupAICard(kvp.Key);
+    }
+
+    // Called by GCCardDisplay when human clicks a face-down card
     public void OnFaceDownCardClicked(int cardIndex)
     {
-        if (!waitingForHuman || pickTargetIndex == -1) return;
-
-        faceDownPickPanel.SetActive(false);
-        foreach (Transform child in faceDownArea) Destroy(child.gameObject);
-
+        if (!waitingForHuman) return;
+        ResetHandNonClickable(pickTargetIndex);
         StartCoroutine(HandleHumanPick(cardIndex));
     }
 
     IEnumerator HandleHumanPick(int cardIndex)
     {
-        yield return StartCoroutine(ProcessPick(0, pickTargetIndex, cardIndex));
-        pickTargetIndex = -1;
-        waitingForHuman = false;
-    }
+        int target = pickTargetIndex;
+        cardIndex = Mathf.Clamp(cardIndex, 0, allHands[target].Count - 1);
 
-    // ── Core pick logic ───────────────────────────────────────────────────────
+        pickedCard = allHands[target][cardIndex];
+        allHands[target].RemoveAt(cardIndex);
 
-    IEnumerator ProcessPick(int pickerIndex, int targetIndex, int cardIndex)
-    {
-        // Safety clamp
-        cardIndex = Mathf.Clamp(cardIndex, 0, allHands[targetIndex].Count - 1);
-
-        Card picked = allHands[targetIndex][cardIndex];
-        allHands[targetIndex].RemoveAt(cardIndex);
-
-        // Remove card UI from target's hand
-        if (allHandUI[targetIndex].ContainsKey(picked))
+        if (allHandUI[target].ContainsKey(pickedCard))
         {
-            Destroy(allHandUI[targetIndex][picked]);
-            allHandUI[targetIndex].Remove(picked);
+            Destroy(allHandUI[target][pickedCard]);
+            allHandUI[target].Remove(pickedCard);
         }
 
-        Debug.Log($"[GC] {PlayerName(pickerIndex)} picked [{picked.rank} of {picked.suit}] from {PlayerName(targetIndex)}");
+        pairMatchCard = allHands[0].FirstOrDefault(c => c.rank == pickedCard.rank);
 
-        // Check if picked card pairs with anything in picker's hand
-        Card matchedCard = allHands[pickerIndex].FirstOrDefault(c => c.rank == picked.rank);
-
-        if (matchedCard != null)
+        if (pairMatchCard != null)
         {
-            // Remove the pair — both cards discarded
-            allHands[pickerIndex].Remove(matchedCard);
-            if (allHandUI[pickerIndex].ContainsKey(matchedCard))
+            // Add picked card + highlight both for tap-to-discard
+            allHands[0].Add(pickedCard);
+            var pObj = SpawnCard(0, pickedCard, faceUp: true);
+            pObj?.GetComponent<GCCardDisplay>()?.SetupSelectablePair(pickedCard, this, 0);
+            pObj?.GetComponent<GCCardDisplay>()?.SetHighlight(true);
+
+            if (allHandUI[0].ContainsKey(pairMatchCard))
             {
-                Destroy(allHandUI[pickerIndex][matchedCard]);
-                allHandUI[pickerIndex].Remove(matchedCard);
+                var md = allHandUI[0][pairMatchCard].GetComponent<GCCardDisplay>();
+                md?.SetupSelectablePair(pairMatchCard, this, 0);
+                md?.SetHighlight(true);
             }
 
-            string pairMsg = $"{PlayerName(pickerIndex)} picked {picked.rank} → Pair thrown! 🃏";
-            ShowMessage(pairMsg);
-            Debug.Log($"[GC] Pair: {picked.rank} of {picked.suit} + {matchedCard.rank} of {matchedCard.suit}");
+            SetTurnText($"Got {pickedCard.rank}! Tap the pair to discard.");
+            waitingForPair = true;
+            while (waitingForPair) yield return null;
         }
         else
         {
-            // No pair — add to picker's hand
-            allHands[pickerIndex].Add(picked);
-            SpawnCardInHand(pickerIndex, picked);
-
-            ShowMessage($"{PlayerName(pickerIndex)} picked a card. No pair.");
+            allHands[0].Add(pickedCard);
+            SpawnCard(0, pickedCard, faceUp: true);
+            SetTurnText($"Picked {pickedCard.rank} of {pickedCard.suit}. No pair.");
+            yield return new WaitForSeconds(1f);
         }
 
-        UpdatePlayerInfoPanels();
-        yield return new WaitForSeconds(aiResultDelay);
+        pickTargetIndex = -1;
+        pickedCard = pairMatchCard = null;
+        waitingForHuman = false;
     }
 
-    // ── Remove players with empty hands ──────────────────────────────────────
+    public void OnPairCardSelected(Card card)
+    {
+        if (!waitingForPair) return;
+        StartCoroutine(DiscardHumanPair());
+    }
+
+    IEnumerator DiscardHumanPair()
+    {
+        Card pc = pickedCard, mc = pairMatchCard;
+        allHands[0].Remove(pc);
+        allHands[0].Remove(mc);
+
+        foreach (Card c in new[] { pc, mc })
+        {
+            if (!allHandUI[0].ContainsKey(c)) continue;
+            var obj = allHandUI[0][c];
+            allHandUI[0].Remove(c);
+            obj.transform.SetParent(throwPile.parent, worldPositionStays: true);
+            StartCoroutine(obj.GetComponent<GCCardDisplay>()?.SlideToCenter(throwPile, slideAnimDuration) ?? Empty());
+        }
+
+        SetTurnText($"You discarded a pair of {pc.rank}s!");
+        yield return new WaitForSeconds(slideAnimDuration + 0.3f);
+        waitingForPair = false;
+    }
+
+    IEnumerator BotPick(int botIdx, int targetIdx, int cardIdx)
+    {
+        cardIdx = Mathf.Clamp(cardIdx, 0, allHands[targetIdx].Count - 1);
+        Card picked = allHands[targetIdx][cardIdx];
+        allHands[targetIdx].RemoveAt(cardIdx);
+
+        if (allHandUI[targetIdx].ContainsKey(picked))
+        {
+            Destroy(allHandUI[targetIdx][picked]);
+            allHandUI[targetIdx].Remove(picked);
+        }
+
+        yield return new WaitForSeconds(aiPickDelay);
+
+        Card match = allHands[botIdx].FirstOrDefault(c => c.rank == picked.rank);
+        if (match != null)
+        {
+            allHands[botIdx].Remove(match);
+            if (allHandUI[botIdx].ContainsKey(match))
+            {
+                var mo = allHandUI[botIdx][match];
+                allHandUI[botIdx].Remove(match);
+                mo.transform.SetParent(throwPile.parent, worldPositionStays: true);
+                StartCoroutine(mo.GetComponent<GCCardDisplay>()?.SlideToCenter(throwPile, slideAnimDuration) ?? Empty());
+            }
+            var po = Instantiate(cardPrefab, throwPile.parent);
+            po.GetComponent<GCCardDisplay>()?.SetupAICard(picked);
+            StartCoroutine(po.GetComponent<GCCardDisplay>()?.SlideToCenter(throwPile, slideAnimDuration) ?? Empty());
+            SetTurnText($"{PlayerName(botIdx)} threw a pair of {picked.rank}s!");
+            yield return new WaitForSeconds(slideAnimDuration + 0.4f);
+        }
+        else
+        {
+            allHands[botIdx].Add(picked);
+            SpawnCard(botIdx, picked, faceUp: false);
+            SetTurnText($"{PlayerName(botIdx)} picked a card. No pair.");
+            yield return new WaitForSeconds(0.6f);
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    void RebuildAllHandUI(bool dealPhase)
+    {
+        for (int i = 0; i < PLAYER_COUNT; i++)
+        {
+            if (handAreas == null || i >= handAreas.Length || handAreas[i] == null) continue;
+            foreach (Transform child in handAreas[i]) Destroy(child.gameObject);
+            allHandUI[i].Clear();
+            foreach (Card c in allHands[i]) SpawnCard(i, c, faceUp: dealPhase || i == 0);
+        }
+    }
+
+    GameObject SpawnCard(int playerIndex, Card c, bool faceUp)
+    {
+        if (handAreas == null || playerIndex >= handAreas.Length || handAreas[playerIndex] == null) return null;
+        var obj = Instantiate(cardPrefab, handAreas[playerIndex]);
+        var disp = obj.GetComponent<GCCardDisplay>();
+        if (disp == null) { Debug.LogError("[GC] GCCardDisplay missing!"); return obj; }
+        if (faceUp) disp.SetupFaceUp(c, this);
+        else disp.SetupAICard(c);
+        allHandUI[playerIndex][c] = obj;
+        return obj;
+    }
 
     void RemoveEmptyPlayers()
     {
-        List<int> toRemove = new List<int>();
-
-        foreach (int p in activePlayers)
+        foreach (int p in activePlayers.Where(p => allHands[p].Count == 0).ToList())
         {
-            if (allHands[p].Count == 0)
-            {
-                toRemove.Add(p);
-                ShowMessage($"{PlayerName(p)} is OUT!");
-                Debug.Log($"[GC] {PlayerName(p)} emptied hand — OUT.");
-            }
-        }
-
-        foreach (int p in toRemove)
             activePlayers.Remove(p);
-
-        // Keep turnIndex valid
-        if (activePlayers.Count > 0)
-            currentTurnIndex = currentTurnIndex % activePlayers.Count;
+            SetTurnText($"{PlayerName(p)} is OUT!");
+        }
+        if (activePlayers.Count > 0) currentTurnIndex %= activePlayers.Count;
     }
-
-    // ── Turn helpers ──────────────────────────────────────────────────────────
 
     void AdvanceTurn()
     {
-        if (activePlayers.Count == 0) return;
-        currentTurnIndex = (currentTurnIndex + 1) % activePlayers.Count;
+        if (activePlayers.Count > 0) currentTurnIndex = (currentTurnIndex + 1) % activePlayers.Count;
     }
 
-    /// <summary>Returns the player index that `current` picks FROM (next in circle).</summary>
     int GetPickTarget(int current)
     {
         int idx = activePlayers.IndexOf(current);
         for (int i = 1; i < activePlayers.Count; i++)
         {
-            int candidate = activePlayers[(idx + i) % activePlayers.Count];
-            if (allHands[candidate].Count > 0)
-                return candidate;
+            int c = activePlayers[(idx + i) % activePlayers.Count];
+            if (allHands[c].Count > 0) return c;
         }
         return -1;
     }
 
-    int CurrentPlayer => activePlayers.Count > 0
-        ? activePlayers[currentTurnIndex % activePlayers.Count]
-        : -1;
+    int CurrentPlayer => activePlayers.Count > 0 ? activePlayers[currentTurnIndex % activePlayers.Count] : -1;
 
-    string PlayerName(int index) => index == 0
-        ? (PlayerSession.IsLoggedIn() ? PlayerSession.GetUser() : "You")
-        : $"CPU {index}";
+    string PlayerName(int i) => i == 0 ? (PlayerSession.IsLoggedIn() ? PlayerSession.GetUser() : "You") : $"Bot {i}";
 
-    // ── Game over ─────────────────────────────────────────────────────────────
+    IEnumerator Empty() { yield break; }
 
     void EndGame()
     {
         gameEnded = true;
-
         int loser = activePlayers.Count == 1 ? activePlayers[0] : -1;
-
-        Debug.Log(loser != -1
-            ? $"[GC] GAME OVER — {PlayerName(loser)} is the Gulam Chor!"
-            : "[GC] GAME OVER — edge case, no single loser.");
-
-        // Currency: human wins = +150, human loses = -150
         if (loser == 0) CurrencyManager.AddCoins(-150);
-        else if (loser != -1) CurrencyManager.AddCoins(150);
+        else if (loser >= 0) CurrencyManager.AddCoins(150);
 
-        // Reveal all AI hands
         for (int i = 1; i < PLAYER_COUNT; i++)
-        {
             foreach (var kvp in allHandUI[i])
-            {
-                Image img = kvp.Value.GetComponent<Image>();
-                if (img != null) img.sprite = kvp.Key.cardSprite;
-            }
-        }
+                kvp.Value.GetComponent<GCCardDisplay>()?.SetupFaceUp(kvp.Key, this);
 
-        if (gameOverPanel == null) return;
-        gameOverPanel.SetActive(true);
-
-        bool humanLost = loser == 0;
-
-        if (gameOverTitle != null)
-            gameOverTitle.text = humanLost
-                ? "You are the Gulam Chor! 🃏"
-                : loser != -1 ? $"{PlayerName(loser)} is the Gulam Chor!" : "Game Over!";
-
-        if (gameOverDetails != null)
-            gameOverDetails.text = humanLost
-                ? "You were stuck with the lone Jack. Better luck next time!"
-                : $"You escaped! {PlayerName(loser)} got stuck with the Jack. Well played!";
+        if (gameOverPanel != null) gameOverPanel.SetActive(true);
+        bool hl = loser == 0;
+        if (gameOverTitle != null) gameOverTitle.text = hl ? "You are the Gulam Chor!" : loser >= 0 ? $"{PlayerName(loser)} is the Gulam Chor!" : "Game Over!";
+        if (gameOverDetails != null) gameOverDetails.text = hl ? "Stuck with the lone Jack. Better luck next time!" : $"You escaped! {PlayerName(loser)} got the Jack!";
+        if (turnText != null) turnText.gameObject.SetActive(false);
     }
 
     public void RestartGame()
     {
         if (gameOverPanel != null) gameOverPanel.SetActive(false);
-        SetupGame();
+        gameEnded = waitingForHuman = waitingForPair = false;
+        currentTurnIndex = 0;
+        if (turnText != null) turnText.gameObject.SetActive(true);
+        StartCoroutine(RunGame());
     }
 
-    // ── UI helpers ────────────────────────────────────────────────────────────
-
-    void SetStatus(string text)
+    void SetTurnText(string text)
     {
-        if (statusText != null) statusText.text = text;
+        if (turnText != null) { turnText.gameObject.SetActive(true); turnText.text = text; }
+        Debug.Log($"[GC] {text}");
     }
 
-    string GetTurnStatusText()
+    void UpdateCardCounts()
     {
-        int cp = CurrentPlayer;
-        if (cp == -1) return "";
-        return cp == 0 ? "YOUR TURN: Pick a card from CPU" : $"{PlayerName(cp)}'s turn...";
-    }
-
-    void ShowMessage(string text)
-    {
-        if (messageText == null) return;
-        StopCoroutine(nameof(MessageCoroutine));
-        StartCoroutine(MessageCoroutine(text));
-    }
-
-    IEnumerator MessageCoroutine(string text)
-    {
-        messageText.text = text;
-        messageText.gameObject.SetActive(true);
-        yield return new WaitForSeconds(2f);
-        messageText.gameObject.SetActive(false);
-    }
-
-    void HighlightTurn(int playerIndex)
-    {
-        if (playerTurnHighlights == null) return;
-        for (int i = 0; i < playerTurnHighlights.Length; i++)
-        {
-            if (playerTurnHighlights[i] != null)
-                playerTurnHighlights[i].enabled = (i == playerIndex);
-        }
-    }
-
-    void UpdatePlayerInfoPanels()
-    {
-        for (int i = 0; i < PLAYER_COUNT; i++)
-        {
-            bool isOut = !activePlayers.Contains(i);
-
-            if (playerNameLabels != null && i < playerNameLabels.Length && playerNameLabels[i] != null)
-                playerNameLabels[i].text = i == 0
-                    ? $"★ {PlayerName(0)}"
-                    : PlayerName(i);
-
-            if (playerCardCountLabels != null && i < playerCardCountLabels.Length && playerCardCountLabels[i] != null)
-                playerCardCountLabels[i].text = isOut
-                    ? "OUT ✓"
-                    : $"{allHands[i].Count} cards";
-        }
+        if (playerCardCountLabels == null) return;
+        for (int i = 0; i < PLAYER_COUNT && i < playerCardCountLabels.Length; i++)
+            if (playerCardCountLabels[i] != null)
+                playerCardCountLabels[i].text = !activePlayers.Contains(i) ? "OUT" : $"{allHands[i].Count}";
     }
 }
