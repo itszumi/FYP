@@ -1,5 +1,7 @@
 ﻿// GCCardDisplay.cs
-// Supports face-up, face-down, AI card display + slide-to-center discard animation.
+// ROOT CAUSE FIX: Button component's color transition was overriding image color.
+// Fix: set Button.transition = None so it never tints the image.
+// This is why cards went dim after EnablePickMode/DisablePickMode cycle.
 
 using System.Collections;
 using UnityEngine;
@@ -23,8 +25,31 @@ public class GCCardDisplay : MonoBehaviour
         _button = GetComponent<Button>();
         if (_button != null)
         {
+            // ── ROOT CAUSE FIX ────────────────────────────────────────────────
+            // Button.transition = None stops Unity from tinting the Image
+            // with Normal/Highlighted/Pressed colors. Without this, every
+            // time a button is interacted with or its interactable state changes,
+            // Unity reapplies the NormalColor tint (which was grey) over the image.
+            _button.transition = Selectable.Transition.None;
+
             _button.onClick.RemoveAllListeners();
             _button.onClick.AddListener(OnClick);
+        }
+
+        ForceWhite();
+    }
+
+    void Start()
+    {
+        ForceWhite();
+    }
+
+    private void ForceWhite()
+    {
+        if (myImage != null)
+        {
+            myImage.color = Color.white;
+            myImage.enabled = true;
         }
     }
 
@@ -58,12 +83,11 @@ public class GCCardDisplay : MonoBehaviour
         if (_button != null) _button.interactable = true;
     }
 
-    // Make card selectable from human hand (for pair discard selection)
     public void SetupSelectablePair(Card c, GCGameManager manager, int handIndex)
     {
         cardData = c;
         _manager = manager;
-        _isPickable = false; // uses different click path
+        _isPickable = false;
         _handIndex = handIndex;
         ApplySprite(c.cardSprite);
         if (_button != null)
@@ -74,24 +98,40 @@ public class GCCardDisplay : MonoBehaviour
         }
     }
 
-    // Flip to face down (called after deal phase)
     public void FlipFaceDown()
     {
         if (myImage != null && cardBackSprite != null)
+        {
             myImage.sprite = cardBackSprite;
+            myImage.color = Color.white;
+        }
     }
 
-    // ── Slide animation to center throw pile ──────────────────────────────────
+    public void FlipFaceUp()
+    {
+        if (myImage != null && cardData != null && cardData.cardSprite != null)
+        {
+            myImage.sprite = cardData.cardSprite;
+            myImage.color = Color.white;
+        }
+    }
 
-    public IEnumerator SlideToCenter(RectTransform throwPile, float duration = 0.4f)
+    // ── Slide to throw pile ───────────────────────────────────────────────────
+
+    public IEnumerator SlideToCenter(RectTransform throwPile, float duration = 0.35f,
+                                     float scatterX = 150f, float scatterY = 80f)
     {
         RectTransform rt = GetComponent<RectTransform>();
         if (rt == null) yield break;
 
-        // Convert throw pile center to local canvas position
+        FlipFaceUp();
+
         Vector3 startPos = rt.position;
-        Vector3 targetPos = throwPile.position;
-        float targetRot = Random.Range(-40f, 40f);
+        Vector3 scatter = new Vector3(
+            Random.Range(-scatterX, scatterX),
+            Random.Range(-scatterY, scatterY), 0f);
+        Vector3 targetPos = throwPile.position + scatter;
+        float targetRot = Random.Range(-45f, 45f);
         float startRot = rt.eulerAngles.z;
 
         float elapsed = 0f;
@@ -103,7 +143,6 @@ public class GCCardDisplay : MonoBehaviour
             rt.rotation = Quaternion.Euler(0f, 0f, Mathf.LerpAngle(startRot, targetRot, t));
             yield return null;
         }
-
         rt.position = targetPos;
         rt.rotation = Quaternion.Euler(0f, 0f, targetRot);
     }
@@ -112,7 +151,11 @@ public class GCCardDisplay : MonoBehaviour
 
     private void ApplySprite(Sprite sprite)
     {
-        if (myImage == null) { Debug.LogError("[GCCardDisplay] myImage is NULL!"); return; }
+        if (myImage == null)
+        {
+            Debug.LogError("[GCCardDisplay] myImage is NULL!");
+            return;
+        }
         myImage.sprite = sprite;
         myImage.color = Color.white;
         myImage.enabled = true;
