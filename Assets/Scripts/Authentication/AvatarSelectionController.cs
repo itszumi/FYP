@@ -1,30 +1,26 @@
-// AvatarSelectionController.cs
-// Matches your scene hierarchy:
-//   Canvas
-//     AvatarPanel
-//       AvatarButton0 ... AvatarButton5   (each Button has a child Image with the sprite)
-//       ConfirmButton
-//
-// LoginUIController calls Show(username) after registration.
-// On confirm: saves avatar to LocalAuth + PlayerPrefs, sets PlayerSession, refreshes HUD.
-
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
 
 public class AvatarSelectionController : MonoBehaviour
 {
-    [Header("Avatar Buttons (assign in order 0–5)")]
+    [Header("Avatar Buttons (0-5)")]
     public Button[] avatarButtons;
 
     [Header("Confirm Button")]
     public Button confirmButton;
 
-    [Header("Selection Colors")]
-    public Color selectedColor = new Color(1f, 0.85f, 0.2f, 1f); // gold
-    public Color unselectedColor = Color.white;
+    [Header("Selector — place inside AvatarPanel (NOT AvatarGrid)")]
+    [Tooltip("Gold ring that moves to whichever avatar is selected")]
+    public RectTransform selector;
 
-    [Header("Scene to load after avatar pick")]
+    [Tooltip("TickMark child of Selector")]
+    public GameObject tickMark;
+
+    [Header("Selector Size — should match button size")]
+    public float selectorSize = 110f;
+
+    [Header("Scene to load after confirm")]
     public string nextScene = "Game Selection";
 
     private int _selected = 0;
@@ -35,17 +31,28 @@ public class AvatarSelectionController : MonoBehaviour
     {
         _username = username;
         _selected = 0;
-
         gameObject.SetActive(true);
-        RefreshHighlight();
 
-        // Set sprites on buttons from AvatarManager
+        // Set sprites on AvatarImage child of each button
         for (int i = 0; i < avatarButtons.Length; i++)
         {
-            // Each button's own Image shows the avatar sprite
-            Image btnImage = avatarButtons[i].GetComponent<Image>();
-            if (btnImage != null && AvatarManager.Instance != null)
-                btnImage.sprite = AvatarManager.Instance.GetSprite(i);
+            if (AvatarManager.Instance != null)
+            {
+                Transform avatarImgT = avatarButtons[i].transform.Find("AvatarImage");
+                if (avatarImgT != null)
+                {
+                    Image img = avatarImgT.GetComponent<Image>();
+                    if (img != null)
+                        img.sprite = AvatarManager.Instance.GetSprite(i);
+                }
+                else
+                {
+                    // Fallback: set on button's own Image if no AvatarImage child
+                    Image img = avatarButtons[i].GetComponent<Image>();
+                    if (img != null)
+                        img.sprite = AvatarManager.Instance.GetSprite(i);
+                }
+            }
 
             int idx = i;
             avatarButtons[i].onClick.RemoveAllListeners();
@@ -54,6 +61,18 @@ public class AvatarSelectionController : MonoBehaviour
 
         confirmButton.onClick.RemoveAllListeners();
         confirmButton.onClick.AddListener(OnConfirm);
+
+        // Setup selector size
+        if (selector != null)
+        {
+            selector.sizeDelta = new Vector2(selectorSize, selectorSize);
+            selector.gameObject.SetActive(false);
+        }
+
+        if (tickMark != null)
+            tickMark.SetActive(false);
+
+        RefreshHighlight();
     }
 
     private void SelectAvatar(int index)
@@ -64,31 +83,27 @@ public class AvatarSelectionController : MonoBehaviour
 
     private void RefreshHighlight()
     {
-        for (int i = 0; i < avatarButtons.Length; i++)
+        if (avatarButtons == null || avatarButtons.Length == 0) return;
+        if (_selected < 0 || _selected >= avatarButtons.Length) return;
+
+        // Move selector to selected button's world position
+        if (selector != null)
         {
-            Image img = avatarButtons[i].GetComponent<Image>();
-            if (img != null)
-                img.color = (i == _selected) ? selectedColor : unselectedColor;
+            selector.gameObject.SetActive(true);
+            selector.position = avatarButtons[_selected].transform.position;
         }
+
+        // Show tick mark
+        if (tickMark != null)
+            tickMark.SetActive(true);
     }
 
     private void OnConfirm()
     {
-        // 1. Save avatar to PlayerPrefs under this user
         LocalAuth.SaveAvatar(_username, _selected);
-
-        // 2. Init currency (first login)
         CurrencyManager.InitForUser(_username);
-
-        // 3. Set runtime session
         PlayerSession.SetUser(_username, _selected);
-
-        // 4. Refresh HUD immediately so avatar + username appear
         HUDController.Instance?.Refresh();
-
-        // 5. Load game
         SceneManager.LoadScene(nextScene);
-        Debug.Log($"[Avatar] Confirming avatar index: {_selected} for user: {_username}");
-        LocalAuth.SaveAvatar(_username, _selected);
     }
 }

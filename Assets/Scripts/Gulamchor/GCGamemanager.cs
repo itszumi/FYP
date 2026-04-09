@@ -1,39 +1,31 @@
-﻿// GCGameManager.cs
-// Fixes:
-// 1. Deal phase: all cards shown face-up → pairs animate face-up to pile → then bot hands flip down
-// 2. Game phase: picked/discarded cards animate face-up to pile
-// 3. Dim cards: handled in GCCardDisplay (ForceWhite in Awake+Start)
-// 4. "New Text": remove the old MessageText GameObject from your Canvas manually
-
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
+using UnityEngine.InputSystem;
 using TMPro;
 
 public class GCGameManager : MonoBehaviour
 {
-    // ── Inspector ─────────────────────────────────────────────────────────────
-
     [Header("Deck")]
     public GCDeck deck;
 
-    [Header("Card Prefab (must have GCCardDisplay)")]
+    [Header("Card Prefab")]
     public GameObject cardPrefab;
 
     [Header("Hand Areas (0=Human, 1-4=Bot)")]
     public Transform[] handAreas;
 
-    [Header("Center Throw Pile — empty RectTransform at screen center")]
+    [Header("Center Throw Pile")]
     public RectTransform throwPile;
 
     [Header("Throw Pile Scatter Range")]
     public float scatterX = 150f;
     public float scatterY = 80f;
 
-    [Header("Turn Text — only UI text during gameplay")]
+    [Header("Turn Text")]
     public TextMeshProUGUI turnText;
 
     [Header("Player Card Count Labels (optional, length 5)")]
@@ -47,7 +39,7 @@ public class GCGameManager : MonoBehaviour
     public Button mainMenuButton;
 
     [Header("Timing")]
-    public float dealShowDuration = 1.2f;  // how long to show all face-up before removing pairs
+    public float dealShowDuration = 1.2f;
     public float aiThinkDelay = 1.2f;
     public float aiPickDelay = 0.5f;
     public float slideAnimDuration = 0.35f;
@@ -70,6 +62,10 @@ public class GCGameManager : MonoBehaviour
     private Card pickedCard = null;
     private Card pairMatchCard = null;
 
+    // Direct mouse pick detection
+    private bool _pickModeActive = false;
+    private int _pickModeTarget = -1;
+
     private const int PLAYER_COUNT = 5;
 
     // ── Unity ─────────────────────────────────────────────────────────────────
@@ -82,7 +78,43 @@ public class GCGameManager : MonoBehaviour
         if (gameOverPanel != null) gameOverPanel.SetActive(false);
         if (turnText != null) turnText.gameObject.SetActive(false);
 
+        ClearThrowPile();
         StartCoroutine(RunGame());
+    }
+
+    // Direct mouse detection — bypasses UI raycast entirely
+    // Uses New Input System (your project setting)
+    void Update()
+    {
+        if (!_pickModeActive || !waitingForHuman) return;
+
+        var mouse = Mouse.current;
+        if (mouse == null) return;
+
+        if (mouse.leftButton.wasPressedThisFrame)
+        {
+            Vector2 mousePos = mouse.position.ReadValue();
+            Debug.Log($"[GC] Mouse clicked at {mousePos}");
+
+            List<Card> hand = allHands[_pickModeTarget];
+            for (int i = 0; i < hand.Count; i++)
+            {
+                Card card = hand[i];
+                if (!allHandUI[_pickModeTarget].ContainsKey(card)) continue;
+
+                RectTransform rt = allHandUI[_pickModeTarget][card].GetComponent<RectTransform>();
+                if (rt == null) continue;
+
+                if (RectTransformUtility.RectangleContainsScreenPoint(rt, mousePos))
+                {
+                    Debug.Log($"[GC] Direct hit on card {i}: {card.rank} of {card.suit}");
+                    _pickModeActive = false;
+                    OnFaceDownCardClicked(i);
+                    return;
+                }
+            }
+            Debug.Log("[GC] Click registered but no card hit.");
+        }
     }
 
     IEnumerator RunGame()
@@ -92,9 +124,7 @@ public class GCGameManager : MonoBehaviour
         yield return StartCoroutine(GamePhase());
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // PHASE 1 — DEAL
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── PHASE 1 — DEAL ────────────────────────────────────────────────────────
 
     IEnumerator DealPhase()
     {
@@ -109,15 +139,13 @@ public class GCGameManager : MonoBehaviour
             activePlayers.Add(i);
         }
 
-        // Deal evenly round-robin
         deck.CreateDeck();
         List<Card> allCards = new List<Card>(deck.cards);
         deck.cards.Clear();
         for (int i = 0; i < allCards.Count; i++)
             allHands[i % PLAYER_COUNT].Add(allCards[i]);
 
-        // ── Show ALL hands face-up so player sees their cards ─────────────────
-        RebuildAllHandUI(faceUp: true);
+        RebuildAllHandUI(faceUp: false);
         UpdateCardCounts();
 
         SetTurnText("Dealing cards...");
@@ -125,21 +153,17 @@ public class GCGameManager : MonoBehaviour
 
         SetTurnText("Removing pairs...");
 
-        // Find all pairs across all players
         var allPairs = new List<(int player, Card c1, Card c2)>();
 
         for (int p = 0; p < PLAYER_COUNT; p++)
         {
             List<Card> hand = allHands[p];
             bool found = true;
-
             while (found)
             {
                 found = false;
                 for (int i = 0; i < hand.Count && !found; i++)
-                {
                     for (int j = i + 1; j < hand.Count && !found; j++)
-                    {
                         if (hand[i].rank == hand[j].rank)
                         {
                             allPairs.Add((p, hand[i], hand[j]));
@@ -147,12 +171,9 @@ public class GCGameManager : MonoBehaviour
                             hand.RemoveAt(i);
                             found = true;
                         }
-                    }
-                }
             }
         }
 
-        // ── Animate all pairs to pile simultaneously — face-up ────────────────
         foreach (var (player, c1, c2) in allPairs)
         {
             StartCoroutine(AnimateCardToThrowPile(player, c1));
@@ -161,11 +182,7 @@ public class GCGameManager : MonoBehaviour
 
         yield return new WaitForSeconds(slideAnimDuration + 0.5f);
 
-        // ── NOW flip bot hands face-down ──────────────────────────────────────
-        for (int p = 1; p < PLAYER_COUNT; p++)
-            foreach (var kvp in allHandUI[p])
-                kvp.Value.GetComponent<GCCardDisplay>()?.FlipFaceDown();
-
+        // Bot hands stay face-down (already spawned face-down)
         RemoveEmptyPlayers();
         UpdateCardCounts();
 
@@ -176,23 +193,15 @@ public class GCGameManager : MonoBehaviour
     IEnumerator AnimateCardToThrowPile(int playerIndex, Card card)
     {
         if (!allHandUI[playerIndex].ContainsKey(card)) yield break;
-
         GameObject obj = allHandUI[playerIndex][card];
         allHandUI[playerIndex].Remove(card);
-
-        // Re-parent so card can move freely across canvas
         obj.transform.SetParent(throwPile.parent, worldPositionStays: true);
-
         GCCardDisplay disp = obj.GetComponent<GCCardDisplay>();
         if (disp != null)
-            // SlideToCenter calls FlipFaceUp() internally before animating
-            yield return StartCoroutine(
-                disp.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY));
+            yield return StartCoroutine(disp.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY));
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // PHASE 2 — GAME
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── PHASE 2 — GAME ────────────────────────────────────────────────────────
 
     IEnumerator GamePhase()
     {
@@ -211,12 +220,16 @@ public class GCGameManager : MonoBehaviour
                 SetTurnText("Your Turn — pick a card!");
                 yield return new WaitForSeconds(0.4f);
 
-                yield return StartCoroutine(ScaleHandArea(target, pickScaleMultiplier, pickScaleDuration));
                 EnablePickMode(target);
+                _pickModeActive = true;
+                _pickModeTarget = target;
+
+                yield return StartCoroutine(ScaleHandArea(target, pickScaleMultiplier, pickScaleDuration));
 
                 waitingForHuman = true;
                 while (waitingForHuman) yield return null;
 
+                _pickModeActive = false;
                 DisablePickMode(target);
                 yield return StartCoroutine(ScaleHandArea(target, 1f, pickScaleDuration));
             }
@@ -224,7 +237,6 @@ public class GCGameManager : MonoBehaviour
             {
                 SetTurnText($"{PlayerName(current)}'s Turn");
                 yield return new WaitForSeconds(aiThinkDelay);
-
                 int pickIdx = Random.Range(0, allHands[target].Count);
                 yield return StartCoroutine(BotPick(current, target, pickIdx));
             }
@@ -247,7 +259,6 @@ public class GCGameManager : MonoBehaviour
         Vector3 fromScale = area.localScale;
         Vector3 toScale = Vector3.one * targetScale;
         float elapsed = 0f;
-
         while (elapsed < duration)
         {
             elapsed += Time.deltaTime;
@@ -262,22 +273,12 @@ public class GCGameManager : MonoBehaviour
     void EnablePickMode(int targetIndex)
     {
         pickTargetIndex = targetIndex;
-        List<Card> hand = allHands[targetIndex];
-
-        for (int i = 0; i < hand.Count; i++)
-        {
-            Card card = hand[i];
-            if (!allHandUI[targetIndex].ContainsKey(card)) continue;
-            int idx = i;
-            allHandUI[targetIndex][card].GetComponent<GCCardDisplay>()
-                ?.SetupFaceDown(card, this, idx);
-        }
+        Debug.Log($"[GC] EnablePickMode: {PlayerName(targetIndex)} has {allHands[targetIndex].Count} cards");
     }
 
     void DisablePickMode(int targetIndex)
     {
-        foreach (var kvp in allHandUI[targetIndex])
-            kvp.Value.GetComponent<GCCardDisplay>()?.SetupAICard(kvp.Key);
+        pickTargetIndex = -1;
     }
 
     public void OnFaceDownCardClicked(int cardIndex)
@@ -302,7 +303,6 @@ public class GCGameManager : MonoBehaviour
 
         if (pairMatchCard != null)
         {
-            // Add picked card to hand and highlight both
             allHands[0].Add(pickedCard);
             GameObject pickedObj = Instantiate(cardPrefab, handAreas[0]);
             GCCardDisplay pickedDisp = pickedObj.GetComponent<GCCardDisplay>();
@@ -354,15 +354,13 @@ public class GCGameManager : MonoBehaviour
             GameObject obj = allHandUI[0][c];
             allHandUI[0].Remove(c);
             obj.transform.SetParent(throwPile.parent, worldPositionStays: true);
-            StartCoroutine(
-                obj.GetComponent<GCCardDisplay>()
-                   ?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
+            StartCoroutine(obj.GetComponent<GCCardDisplay>()
+                ?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
                 ?? EmptyCoroutine());
         }
 
         SetTurnText($"You discarded a pair of {pickedCard.rank}s!");
         yield return new WaitForSeconds(slideAnimDuration + 0.4f);
-
         waitingForPairDiscard = false;
     }
 
@@ -371,7 +369,6 @@ public class GCGameManager : MonoBehaviour
     IEnumerator BotPick(int botIndex, int targetIndex, int cardIdx)
     {
         cardIdx = Mathf.Clamp(cardIdx, 0, allHands[targetIndex].Count - 1);
-
         Card picked = allHands[targetIndex][cardIdx];
         allHands[targetIndex].RemoveAt(cardIdx);
 
@@ -389,27 +386,22 @@ public class GCGameManager : MonoBehaviour
         {
             allHands[botIndex].Remove(match);
 
-            // Animate match card to pile face-up
             if (allHandUI[botIndex].ContainsKey(match))
             {
                 GameObject mo = allHandUI[botIndex][match];
                 allHandUI[botIndex].Remove(match);
                 mo.transform.SetParent(throwPile.parent, worldPositionStays: true);
-                // Flip face-up before sliding
                 mo.GetComponent<GCCardDisplay>()?.FlipFaceUp();
-                StartCoroutine(
-                    mo.GetComponent<GCCardDisplay>()
-                      ?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
+                StartCoroutine(mo.GetComponent<GCCardDisplay>()
+                    ?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
                     ?? EmptyCoroutine());
             }
 
-            // Spawn picked card face-up and animate to pile
             GameObject po = Instantiate(cardPrefab, handAreas[botIndex]);
             GCCardDisplay pd = po.GetComponent<GCCardDisplay>();
-            pd?.SetupFaceUp(picked, this); // face-up so player can see what was picked
+            pd?.SetupFaceUp(picked, this);
             po.transform.SetParent(throwPile.parent, worldPositionStays: true);
-            StartCoroutine(
-                pd?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
+            StartCoroutine(pd?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
                 ?? EmptyCoroutine());
 
             SetTurnText($"{PlayerName(botIndex)} threw a pair of {picked.rank}s!");
@@ -419,7 +411,7 @@ public class GCGameManager : MonoBehaviour
         {
             allHands[botIndex].Add(picked);
             SpawnCardInHand(botIndex, picked, faceUp: false);
-            SetTurnText($"{PlayerName(botIndex)} picked a card. No pair.");
+            SetTurnText($"{PlayerName(botIndex)} picked a card.");
             yield return new WaitForSeconds(0.6f);
         }
     }
@@ -440,27 +432,19 @@ public class GCGameManager : MonoBehaviour
 
     void SpawnCardInHand(int playerIndex, Card c, bool faceUp)
     {
-        if (handAreas == null || playerIndex >= handAreas.Length
-            || handAreas[playerIndex] == null) return;
-
+        if (handAreas == null || playerIndex >= handAreas.Length || handAreas[playerIndex] == null) return;
         GameObject obj = Instantiate(cardPrefab, handAreas[playerIndex]);
         GCCardDisplay disp = obj.GetComponent<GCCardDisplay>();
         if (disp == null) return;
-
         if (faceUp) disp.SetupFaceUp(c, this);
         else disp.SetupAICard(c);
-
         allHandUI[playerIndex][c] = obj;
     }
 
     void RemoveEmptyPlayers()
     {
         var toRemove = activePlayers.Where(p => allHands[p].Count == 0).ToList();
-        foreach (int p in toRemove)
-        {
-            activePlayers.Remove(p);
-            Debug.Log($"[GC] {PlayerName(p)} is OUT.");
-        }
+        foreach (int p in toRemove) activePlayers.Remove(p);
         if (activePlayers.Count > 0)
             currentTurnIndex = currentTurnIndex % activePlayers.Count;
     }
@@ -524,19 +508,23 @@ public class GCGameManager : MonoBehaviour
     public void RestartGame()
     {
         if (gameOverPanel != null) gameOverPanel.SetActive(false);
-
-        if (throwPile != null)
-            foreach (Transform child in throwPile.parent)
-                if (child != throwPile.transform
-                    && child.GetComponent<GCCardDisplay>() != null)
-                    Destroy(child.gameObject);
-
+        ClearThrowPile();
         gameEnded = false;
         waitingForHuman = false;
+        _pickModeActive = false;
         currentTurnIndex = 0;
-
         if (turnText != null) turnText.gameObject.SetActive(true);
         StartCoroutine(RunGame());
+    }
+
+    void ClearThrowPile()
+    {
+        if (throwPile == null) return;
+        var toDestroy = new List<GameObject>();
+        foreach (Transform child in throwPile.parent)
+            if (child != throwPile.transform && child.GetComponent<GCCardDisplay>() != null)
+                toDestroy.Add(child.gameObject);
+        foreach (var go in toDestroy) Destroy(go);
     }
 
     // ── UI ────────────────────────────────────────────────────────────────────

@@ -25,12 +25,16 @@ public class GCCardDisplay : MonoBehaviour
         _button = GetComponent<Button>();
         if (_button != null)
         {
-            // ── ROOT CAUSE FIX ────────────────────────────────────────────────
-            // Button.transition = None stops Unity from tinting the Image
-            // with Normal/Highlighted/Pressed colors. Without this, every
-            // time a button is interacted with or its interactable state changes,
-            // Unity reapplies the NormalColor tint (which was grey) over the image.
-            _button.transition = Selectable.Transition.None;
+            // Keep ColorTint transition (required for click detection)
+            // but set ALL color states to pure white so button NEVER tints the image
+            ColorBlock cb = _button.colors;
+            cb.normalColor = Color.white;
+            cb.highlightedColor = Color.white;
+            cb.pressedColor = new Color(0.9f, 0.9f, 0.9f, 1f); // subtle press feedback
+            cb.selectedColor = Color.white;
+            cb.disabledColor = Color.white; // white even when disabled
+            cb.colorMultiplier = 1f;
+            _button.colors = cb;
 
             _button.onClick.RemoveAllListeners();
             _button.onClick.AddListener(OnClick);
