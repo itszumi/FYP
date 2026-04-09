@@ -10,15 +10,12 @@ public class AvatarSelectionController : MonoBehaviour
     [Header("Confirm Button")]
     public Button confirmButton;
 
-    [Header("Selector — place inside AvatarPanel (NOT AvatarGrid)")]
-    [Tooltip("Gold ring that moves to whichever avatar is selected")]
+    [Header("Selector (ring + tick sprite — child of AvatarPanel)")]
     public RectTransform selector;
 
-    [Tooltip("TickMark child of Selector")]
-    public GameObject tickMark;
-
-    [Header("Selector Size — should match button size")]
-    public float selectorSize = 110f;
+    [Header("Selector Size")]
+    public float selectorWidth = 145f;
+    public float selectorHeight = 140f;
 
     [Header("Scene to load after confirm")]
     public string nextScene = "Game Selection";
@@ -26,12 +23,18 @@ public class AvatarSelectionController : MonoBehaviour
     private int _selected = 0;
     private string _username = "";
 
-    // ── Called from LoginUIController after registration ──────────────────────
     public void Show(string username)
     {
         _username = username;
         _selected = 0;
         gameObject.SetActive(true);
+
+        // Hide selector initially
+        if (selector != null)
+        {
+            selector.sizeDelta = new Vector2(selectorWidth, selectorHeight);
+            selector.gameObject.SetActive(false);
+        }
 
         // Set sprites on AvatarImage child of each button
         for (int i = 0; i < avatarButtons.Length; i++)
@@ -47,7 +50,6 @@ public class AvatarSelectionController : MonoBehaviour
                 }
                 else
                 {
-                    // Fallback: set on button's own Image if no AvatarImage child
                     Image img = avatarButtons[i].GetComponent<Image>();
                     if (img != null)
                         img.sprite = AvatarManager.Instance.GetSprite(i);
@@ -61,16 +63,6 @@ public class AvatarSelectionController : MonoBehaviour
 
         confirmButton.onClick.RemoveAllListeners();
         confirmButton.onClick.AddListener(OnConfirm);
-
-        // Setup selector size
-        if (selector != null)
-        {
-            selector.sizeDelta = new Vector2(selectorSize, selectorSize);
-            selector.gameObject.SetActive(false);
-        }
-
-        if (tickMark != null)
-            tickMark.SetActive(false);
 
         RefreshHighlight();
     }
@@ -86,16 +78,12 @@ public class AvatarSelectionController : MonoBehaviour
         if (avatarButtons == null || avatarButtons.Length == 0) return;
         if (_selected < 0 || _selected >= avatarButtons.Length) return;
 
-        // Move selector to selected button's world position
         if (selector != null)
         {
             selector.gameObject.SetActive(true);
             selector.position = avatarButtons[_selected].transform.position;
+            selector.sizeDelta = new Vector2(selectorWidth, selectorHeight);
         }
-
-        // Show tick mark
-        if (tickMark != null)
-            tickMark.SetActive(true);
     }
 
     private void OnConfirm()
