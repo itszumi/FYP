@@ -62,9 +62,13 @@ public class GCGameManager : MonoBehaviour
     private Card pickedCard = null;
     private Card pairMatchCard = null;
 
-    // Direct mouse pick detection
+    // Direct mouse pick
     private bool _pickModeActive = false;
     private int _pickModeTarget = -1;
+
+    // Throw pile tint tracking
+    private GameObject _lastThrownA = null;
+    private GameObject _lastThrownB = null;
 
     private const int PLAYER_COUNT = 5;
 
@@ -82,8 +86,6 @@ public class GCGameManager : MonoBehaviour
         StartCoroutine(RunGame());
     }
 
-    // Direct mouse detection — bypasses UI raycast entirely
-    // Uses New Input System (your project setting)
     void Update()
     {
         if (!_pickModeActive || !waitingForHuman) return;
@@ -94,7 +96,6 @@ public class GCGameManager : MonoBehaviour
         if (mouse.leftButton.wasPressedThisFrame)
         {
             Vector2 mousePos = mouse.position.ReadValue();
-            Debug.Log($"[GC] Mouse clicked at {mousePos}");
 
             List<Card> hand = allHands[_pickModeTarget];
             for (int i = 0; i < hand.Count; i++)
@@ -107,13 +108,12 @@ public class GCGameManager : MonoBehaviour
 
                 if (RectTransformUtility.RectangleContainsScreenPoint(rt, mousePos))
                 {
-                    Debug.Log($"[GC] Direct hit on card {i}: {card.rank} of {card.suit}");
+                    Debug.Log($"[GC] Hit card {i}: {card.rank} of {card.suit}");
                     _pickModeActive = false;
                     OnFaceDownCardClicked(i);
                     return;
                 }
             }
-            Debug.Log("[GC] Click registered but no card hit.");
         }
     }
 
@@ -131,6 +131,8 @@ public class GCGameManager : MonoBehaviour
         allHands.Clear();
         allHandUI.Clear();
         activePlayers.Clear();
+        _lastThrownA = null;
+        _lastThrownB = null;
 
         for (int i = 0; i < PLAYER_COUNT; i++)
         {
@@ -174,6 +176,7 @@ public class GCGameManager : MonoBehaviour
             }
         }
 
+        // Animate all pairs simultaneously
         foreach (var (player, c1, c2) in allPairs)
         {
             StartCoroutine(AnimateCardToThrowPile(player, c1));
@@ -182,7 +185,10 @@ public class GCGameManager : MonoBehaviour
 
         yield return new WaitForSeconds(slideAnimDuration + 0.5f);
 
-        // Bot hands stay face-down (already spawned face-down)
+        // Tint ALL deal-phase pile cards yellow (they are all "old")
+        TintAllPileCardsYellow();
+
+        // Bot hands stay face-down
         RemoveEmptyPlayers();
         UpdateCardCounts();
 
@@ -199,6 +205,53 @@ public class GCGameManager : MonoBehaviour
         GCCardDisplay disp = obj.GetComponent<GCCardDisplay>();
         if (disp != null)
             yield return StartCoroutine(disp.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY));
+    }
+
+    // ── Tint helpers ──────────────────────────────────────────────────────────
+
+    // Tints all current pile cards yellow (called after deal phase)
+    void TintAllPileCardsYellow()
+    {
+        foreach (Transform child in throwPile.parent)
+        {
+            if (child == throwPile.transform) continue;
+            Image img = child.GetComponent<Image>();
+            if (img != null) img.color = new Color(1f, 0.85f, 0.4f, 1f);
+        }
+        _lastThrownA = null;
+        _lastThrownB = null;
+    }
+
+    // Call after each pair is thrown during gameplay:
+    // previous top cards go yellow, new cards stay white
+    void TintThrowPile(GameObject newA, GameObject newB)
+    {
+        Color yellow = new Color(1f, 0.85f, 0.4f, 1f);
+
+        if (_lastThrownA != null)
+        {
+            Image img = _lastThrownA.GetComponent<Image>();
+            if (img != null) img.color = yellow;
+        }
+        if (_lastThrownB != null)
+        {
+            Image img = _lastThrownB.GetComponent<Image>();
+            if (img != null) img.color = yellow;
+        }
+
+        if (newA != null)
+        {
+            Image img = newA.GetComponent<Image>();
+            if (img != null) img.color = Color.white;
+        }
+        if (newB != null)
+        {
+            Image img = newB.GetComponent<Image>();
+            if (img != null) img.color = Color.white;
+        }
+
+        _lastThrownA = newA;
+        _lastThrownB = newB;
     }
 
     // ── PHASE 2 — GAME ────────────────────────────────────────────────────────
@@ -348,6 +401,10 @@ public class GCGameManager : MonoBehaviour
         allHands[0].Remove(pickedCard);
         allHands[0].Remove(pairMatchCard);
 
+        GameObject thrownA = null;
+        GameObject thrownB = null;
+        bool first = true;
+
         foreach (Card c in new[] { pickedCard, pairMatchCard })
         {
             if (!allHandUI[0].ContainsKey(c)) continue;
@@ -357,9 +414,13 @@ public class GCGameManager : MonoBehaviour
             StartCoroutine(obj.GetComponent<GCCardDisplay>()
                 ?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
                 ?? EmptyCoroutine());
+            if (first) { thrownA = obj; first = false; }
+            else thrownB = obj;
         }
 
         SetTurnText($"You discarded a pair of {pickedCard.rank}s!");
+        TintThrowPile(thrownA, thrownB);
+
         yield return new WaitForSeconds(slideAnimDuration + 0.4f);
         waitingForPairDiscard = false;
     }
@@ -386,13 +447,14 @@ public class GCGameManager : MonoBehaviour
         {
             allHands[botIndex].Remove(match);
 
+            GameObject matchObj = null;
             if (allHandUI[botIndex].ContainsKey(match))
             {
-                GameObject mo = allHandUI[botIndex][match];
+                matchObj = allHandUI[botIndex][match];
                 allHandUI[botIndex].Remove(match);
-                mo.transform.SetParent(throwPile.parent, worldPositionStays: true);
-                mo.GetComponent<GCCardDisplay>()?.FlipFaceUp();
-                StartCoroutine(mo.GetComponent<GCCardDisplay>()
+                matchObj.transform.SetParent(throwPile.parent, worldPositionStays: true);
+                matchObj.GetComponent<GCCardDisplay>()?.FlipFaceUp();
+                StartCoroutine(matchObj.GetComponent<GCCardDisplay>()
                     ?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
                     ?? EmptyCoroutine());
             }
@@ -405,6 +467,8 @@ public class GCGameManager : MonoBehaviour
                 ?? EmptyCoroutine());
 
             SetTurnText($"{PlayerName(botIndex)} threw a pair of {picked.rank}s!");
+            TintThrowPile(po, matchObj);
+
             yield return new WaitForSeconds(slideAnimDuration + 0.5f);
         }
         else
@@ -433,6 +497,7 @@ public class GCGameManager : MonoBehaviour
     void SpawnCardInHand(int playerIndex, Card c, bool faceUp)
     {
         if (handAreas == null || playerIndex >= handAreas.Length || handAreas[playerIndex] == null) return;
+        if (cardPrefab == null) { Debug.LogError("[GC] cardPrefab is NULL!"); return; }
         GameObject obj = Instantiate(cardPrefab, handAreas[playerIndex]);
         GCCardDisplay disp = obj.GetComponent<GCCardDisplay>();
         if (disp == null) return;
@@ -513,6 +578,8 @@ public class GCGameManager : MonoBehaviour
         waitingForHuman = false;
         _pickModeActive = false;
         currentTurnIndex = 0;
+        _lastThrownA = null;
+        _lastThrownB = null;
         if (turnText != null) turnText.gameObject.SetActive(true);
         StartCoroutine(RunGame());
     }
@@ -522,8 +589,12 @@ public class GCGameManager : MonoBehaviour
         if (throwPile == null) return;
         var toDestroy = new List<GameObject>();
         foreach (Transform child in throwPile.parent)
-            if (child != throwPile.transform && child.GetComponent<GCCardDisplay>() != null)
+        {
+            if (child == throwPile.transform) continue;
+            if (child.gameObject == cardPrefab) continue;
+            if (child.GetComponent<GCCardDisplay>() != null)
                 toDestroy.Add(child.gameObject);
+        }
         foreach (var go in toDestroy) Destroy(go);
     }
 
