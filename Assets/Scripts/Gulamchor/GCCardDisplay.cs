@@ -1,9 +1,4 @@
-﻿// GCCardDisplay.cs
-// ROOT CAUSE FIX: Button component's color transition was overriding image color.
-// Fix: set Button.transition = None so it never tints the image.
-// This is why cards went dim after EnablePickMode/DisablePickMode cycle.
-
-using System.Collections;
+﻿using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -25,14 +20,12 @@ public class GCCardDisplay : MonoBehaviour
         _button = GetComponent<Button>();
         if (_button != null)
         {
-            // Keep ColorTint transition (required for click detection)
-            // but set ALL color states to pure white so button NEVER tints the image
             ColorBlock cb = _button.colors;
             cb.normalColor = Color.white;
             cb.highlightedColor = Color.white;
-            cb.pressedColor = new Color(0.9f, 0.9f, 0.9f, 1f); // subtle press feedback
+            cb.pressedColor = new Color(0.9f, 0.9f, 0.9f, 1f);
             cb.selectedColor = Color.white;
-            cb.disabledColor = Color.white; // white even when disabled
+            cb.disabledColor = Color.white;
             cb.colorMultiplier = 1f;
             _button.colors = cb;
 
@@ -57,7 +50,7 @@ public class GCCardDisplay : MonoBehaviour
         }
     }
 
-    // ── Setup methods ─────────────────────────────────────────────────────────
+    // ── Setup ─────────────────────────────────────────────────────────────────
 
     public void SetupFaceUp(Card c, GCGameManager manager)
     {
@@ -151,6 +144,51 @@ public class GCCardDisplay : MonoBehaviour
         rt.rotation = Quaternion.Euler(0f, 0f, targetRot);
     }
 
+    // ── Pop animation ─────────────────────────────────────────────────────────
+
+    public IEnumerator PopAnimation(float duration = 0.3f)
+    {
+        RectTransform rt = GetComponent<RectTransform>();
+        if (rt == null) yield break;
+
+        Vector3 originalScale = rt.localScale;
+        Vector3 popScale = originalScale * 1.3f;
+        float half = duration / 2f;
+        float elapsed = 0f;
+
+        while (elapsed < half)
+        {
+            elapsed += Time.deltaTime;
+            rt.localScale = Vector3.Lerp(originalScale, popScale, elapsed / half);
+            yield return null;
+        }
+
+        elapsed = 0f;
+
+        while (elapsed < half)
+        {
+            elapsed += Time.deltaTime;
+            rt.localScale = Vector3.Lerp(popScale, originalScale, elapsed / half);
+            yield return null;
+        }
+
+        rt.localScale = originalScale;
+    }
+
+    // ── Highlight ─────────────────────────────────────────────────────────────
+
+    public void SetHighlight(bool on)
+    {
+        if (myImage != null)
+            myImage.color = on ? new Color(1f, 0.85f, 0.2f, 1f) : Color.white;
+    }
+
+    public void SetPairHighlight(bool on)
+    {
+        if (myImage != null)
+            myImage.color = on ? new Color(1f, 0.92f, 0.2f, 1f) : Color.white;
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void ApplySprite(Sprite sprite)
@@ -170,11 +208,5 @@ public class GCCardDisplay : MonoBehaviour
     {
         if (_isPickable && _manager != null)
             _manager.OnFaceDownCardClicked(_handIndex);
-    }
-
-    public void SetHighlight(bool on)
-    {
-        if (myImage != null)
-            myImage.color = on ? new Color(1f, 0.85f, 0.2f, 1f) : Color.white;
     }
 }

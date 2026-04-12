@@ -216,7 +216,7 @@ public class GCGameManager : MonoBehaviour
         {
             if (child == throwPile.transform) continue;
             Image img = child.GetComponent<Image>();
-            if (img != null) img.color = new Color(1f, 0.85f, 0.4f, 1f);
+            if (img != null) img.color = new Color(1f, 0.95f, 0.75f, 1f);
         }
         _lastThrownA = null;
         _lastThrownB = null;
@@ -226,17 +226,17 @@ public class GCGameManager : MonoBehaviour
     // previous top cards go yellow, new cards stay white
     void TintThrowPile(GameObject newA, GameObject newB)
     {
-        Color yellow = new Color(1f, 0.85f, 0.4f, 1f);
+        Color lightYellow = new Color(1f, 0.95f, 0.75f, 1f);
 
         if (_lastThrownA != null)
         {
             Image img = _lastThrownA.GetComponent<Image>();
-            if (img != null) img.color = yellow;
+            if (img != null) img.color = lightYellow;
         }
         if (_lastThrownB != null)
         {
             Image img = _lastThrownB.GetComponent<Image>();
-            if (img != null) img.color = yellow;
+            if (img != null) img.color = lightYellow;
         }
 
         if (newA != null)
@@ -356,20 +356,27 @@ public class GCGameManager : MonoBehaviour
 
         if (pairMatchCard != null)
         {
+            // Add picked card to hand
             allHands[0].Add(pickedCard);
             GameObject pickedObj = Instantiate(cardPrefab, handAreas[0]);
             GCCardDisplay pickedDisp = pickedObj.GetComponent<GCCardDisplay>();
             pickedDisp?.SetupFaceUp(pickedCard, this);
-            pickedDisp?.SetHighlight(true);
             allHandUI[0][pickedCard] = pickedObj;
 
+            // Pop animation on picked card
+            if (pickedDisp != null)
+                yield return StartCoroutine(pickedDisp.PopAnimation());
+
+            // Highlight BOTH pair cards yellow
+            pickedDisp?.SetPairHighlight(true);
             if (allHandUI[0].ContainsKey(pairMatchCard))
             {
                 GCCardDisplay md = allHandUI[0][pairMatchCard].GetComponent<GCCardDisplay>();
                 md?.SetupSelectablePair(pairMatchCard, this, 0);
-                md?.SetHighlight(true);
+                md?.SetPairHighlight(true);
             }
             pickedDisp?.SetupSelectablePair(pickedCard, this, 0);
+            pickedDisp?.SetPairHighlight(true);
 
             SetTurnText($"Pair of {pickedCard.rank}s! Click a highlighted card to discard.");
 
@@ -378,10 +385,20 @@ public class GCGameManager : MonoBehaviour
         }
         else
         {
+            // No pair — add to hand and pop briefly
             allHands[0].Add(pickedCard);
             SpawnCardInHand(0, pickedCard, faceUp: true);
+
+            // Pop the newly added card
+            if (allHandUI[0].ContainsKey(pickedCard))
+            {
+                GCCardDisplay newDisp = allHandUI[0][pickedCard].GetComponent<GCCardDisplay>();
+                if (newDisp != null)
+                    yield return StartCoroutine(newDisp.PopAnimation());
+            }
+
             SetTurnText($"You picked {pickedCard.rank} of {pickedCard.suit}. No pair.");
-            yield return new WaitForSeconds(1f);
+            yield return new WaitForSeconds(0.8f);
         }
 
         pickTargetIndex = -1;
