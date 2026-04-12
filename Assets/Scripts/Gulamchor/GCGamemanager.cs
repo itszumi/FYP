@@ -309,6 +309,13 @@ public class GCGameManager : MonoBehaviour
     {
         if (handAreas == null || playerIndex >= handAreas.Length) yield break;
         Transform area = handAreas[playerIndex];
+
+        // Bring to front when scaling up, send back when scaling down
+        if (targetScale > 1f)
+            area.SetAsLastSibling();
+        else
+            area.SetAsFirstSibling();
+
         Vector3 fromScale = area.localScale;
         Vector3 toScale = Vector3.one * targetScale;
         float elapsed = 0f;
