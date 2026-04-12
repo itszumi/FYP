@@ -25,6 +25,9 @@ public class GCGameManager : MonoBehaviour
     public float scatterX = 150f;
     public float scatterY = 80f;
 
+    [Header("Throw Pile Drop Radius — how close to pile center to count as a drop")]
+    public float dropRadius = 200f;
+
     [Header("Turn Text")]
     public TextMeshProUGUI turnText;
 
@@ -59,8 +62,12 @@ public class GCGameManager : MonoBehaviour
     private int pickTargetIndex = -1;
 
     private bool waitingForPairDiscard = false;
+    private bool waitingForInitialDiscard = false;
     private Card pickedCard = null;
     private Card pairMatchCard = null;
+
+    // Pairs remaining for human to discard in deal phase
+    private List<(Card, Card)> _humanInitialPairs = new List<(Card, Card)>();
 
     // Direct mouse pick
     private bool _pickModeActive = false;
@@ -117,6 +124,13 @@ public class GCGameManager : MonoBehaviour
         }
     }
 
+    // ── Check if position is over throw pile (used by drag) ──────────────────
+    public bool IsOverThrowPile(Vector3 worldPos)
+    {
+        if (throwPile == null) return false;
+        return Vector3.Distance(worldPos, throwPile.position) < dropRadius;
+    }
+
     IEnumerator RunGame()
     {
         yield return StartCoroutine(DealPhase());
@@ -133,6 +147,7 @@ public class GCGameManager : MonoBehaviour
         activePlayers.Clear();
         _lastThrownA = null;
         _lastThrownB = null;
+        _humanInitialPairs.Clear();
 
         for (int i = 0; i < PLAYER_COUNT; i++)
         {
@@ -155,12 +170,31 @@ public class GCGameManager : MonoBehaviour
 
         SetTurnText("Removing pairs...");
 
-        var allPairs = new List<(int player, Card c1, Card c2)>();
+        // Find all pairs for bots (animate to pile)
+        var botPairs = new List<(int player, Card c1, Card c2)>();
 
-        for (int p = 0; p < PLAYER_COUNT; p++)
+        // Find human pairs separately
+        List<Card> humanHand = allHands[0];
+        bool found = true;
+        while (found)
+        {
+            found = false;
+            for (int i = 0; i < humanHand.Count && !found; i++)
+                for (int j = i + 1; j < humanHand.Count && !found; j++)
+                    if (humanHand[i].rank == humanHand[j].rank)
+                    {
+                        _humanInitialPairs.Add((humanHand[i], humanHand[j]));
+                        humanHand.RemoveAt(j);
+                        humanHand.RemoveAt(i);
+                        found = true;
+                    }
+        }
+
+        // Find bot pairs
+        for (int p = 1; p < PLAYER_COUNT; p++)
         {
             List<Card> hand = allHands[p];
-            bool found = true;
+            found = true;
             while (found)
             {
                 found = false;
@@ -168,7 +202,7 @@ public class GCGameManager : MonoBehaviour
                     for (int j = i + 1; j < hand.Count && !found; j++)
                         if (hand[i].rank == hand[j].rank)
                         {
-                            allPairs.Add((p, hand[i], hand[j]));
+                            botPairs.Add((p, hand[i], hand[j]));
                             hand.RemoveAt(j);
                             hand.RemoveAt(i);
                             found = true;
@@ -176,8 +210,8 @@ public class GCGameManager : MonoBehaviour
             }
         }
 
-        // Animate all pairs simultaneously
-        foreach (var (player, c1, c2) in allPairs)
+        // Animate bot pairs to pile simultaneously
+        foreach (var (player, c1, c2) in botPairs)
         {
             StartCoroutine(AnimateCardToThrowPile(player, c1));
             StartCoroutine(AnimateCardToThrowPile(player, c2));
@@ -185,15 +219,178 @@ public class GCGameManager : MonoBehaviour
 
         yield return new WaitForSeconds(slideAnimDuration + 0.5f);
 
-        // Tint ALL deal-phase pile cards yellow (they are all "old")
+        // Tint all bot pile cards yellow
         TintAllPileCardsYellow();
 
-        // Bot hands stay face-down
+        // Put all pair cards back into human hand for self-selection
+        foreach (var (c1, c2) in _humanInitialPairs)
+        {
+            allHands[0].Add(c1);
+            allHands[0].Add(c2);
+        }
+
+        // Show all human cards face-up, let user find and discard pairs
+        if (_humanInitialPairs.Count > 0)
+        {
+            // Rebuild human hand UI with all cards including pairs
+            foreach (Transform child in handAreas[0]) Destroy(child.gameObject);
+            allHandUI[0].Clear();
+            foreach (Card c in allHands[0])
+                SpawnCardInHand(0, c, faceUp: true);
+
+            SetTurnText("Select pairs to discard! Click two matching cards.");
+            yield return StartCoroutine(HumanSelfSelectPairs());
+        }
+
+        // Rebuild human hand UI after pair removal (remaining cards only)
+        foreach (Transform child in handAreas[0]) Destroy(child.gameObject);
+        allHandUI[0].Clear();
+        foreach (Card c in allHands[0])
+            SpawnCardInHand(0, c, faceUp: true);
+
+        // Bot hands face-down
+        for (int p = 1; p < PLAYER_COUNT; p++)
+            foreach (var kvp in allHandUI[p])
+                kvp.Value.GetComponent<GCCardDisplay>()?.FlipFaceDown();
+
         RemoveEmptyPlayers();
         UpdateCardCounts();
 
         SetTurnText("Game starts!");
         yield return new WaitForSeconds(0.8f);
+    }
+
+    // ── Human self-selects pairs to discard ───────────────────────────────────
+
+    private Card _initialFirstSelected = null;
+    private GCCardDisplay _initialFirstSelectedDisp = null;
+    private bool _waitingForInitialSelect = false;
+
+    IEnumerator HumanSelfSelectPairs()
+    {
+        // Count how many pairs need to be discarded
+        int pairsLeft = _humanInitialPairs.Count;
+
+        // Make all hand cards clickable for selection
+        EnableInitialCardSelection();
+
+        while (pairsLeft > 0)
+        {
+            _waitingForInitialSelect = true;
+            while (_waitingForInitialSelect) yield return null;
+            pairsLeft--;
+
+            // Re-enable selection for remaining cards
+            if (pairsLeft > 0)
+                EnableInitialCardSelection();
+        }
+
+        _humanInitialPairs.Clear();
+        _initialFirstSelected = null;
+        _initialFirstSelectedDisp = null;
+    }
+
+    void EnableInitialCardSelection()
+    {
+        foreach (var kvp in allHandUI[0])
+        {
+            Card card = kvp.Key;
+            GCCardDisplay disp = kvp.Value.GetComponent<GCCardDisplay>();
+            if (disp == null) continue;
+
+            // Wire each card button to OnInitialCardClicked
+            Button btn = kvp.Value.GetComponent<Button>();
+            if (btn != null)
+            {
+                btn.onClick.RemoveAllListeners();
+                Card captured = card;
+                btn.onClick.AddListener(() => OnInitialCardClicked(captured));
+                btn.interactable = true;
+            }
+        }
+    }
+
+    public void OnInitialCardClicked(Card card)
+    {
+        if (!allHandUI[0].ContainsKey(card)) return;
+        GCCardDisplay disp = allHandUI[0][card].GetComponent<GCCardDisplay>();
+
+        if (_initialFirstSelected == null)
+        {
+            // First card selected — highlight it
+            _initialFirstSelected = card;
+            _initialFirstSelectedDisp = disp;
+            disp?.SetPairHighlight(true);
+        }
+        else if (_initialFirstSelected == card)
+        {
+            // Same card clicked — deselect
+            _initialFirstSelected = null;
+            disp?.SetPairHighlight(false);
+            _initialFirstSelectedDisp = null;
+        }
+        else if (_initialFirstSelected.rank == card.rank)
+        {
+            // Match found — highlight second card and discard both
+            disp?.SetPairHighlight(true);
+            StartCoroutine(DiscardInitialSelectedPair(
+                _initialFirstSelected, card,
+                _initialFirstSelectedDisp, disp));
+        }
+        else
+        {
+            // Not a match — flash red briefly then deselect
+            StartCoroutine(FlashNoMatch(disp));
+        }
+    }
+
+    IEnumerator FlashNoMatch(GCCardDisplay disp)
+    {
+        if (disp?.myImage != null)
+            disp.myImage.color = new Color(1f, 0.3f, 0.3f, 1f); // red flash
+        yield return new WaitForSeconds(0.3f);
+        disp?.SetPairHighlight(false);
+    }
+
+    IEnumerator DiscardInitialSelectedPair(Card c1, Card c2,
+        GCCardDisplay d1, GCCardDisplay d2)
+    {
+        // Reset selection state
+        _initialFirstSelected = null;
+        _initialFirstSelectedDisp = null;
+
+        // Remove from hand data
+        allHands[0].Remove(c1);
+        allHands[0].Remove(c2);
+
+        // Animate both to pile
+        GameObject obj1 = allHandUI[0].ContainsKey(c1) ? allHandUI[0][c1] : null;
+        GameObject obj2 = allHandUI[0].ContainsKey(c2) ? allHandUI[0][c2] : null;
+
+        allHandUI[0].Remove(c1);
+        allHandUI[0].Remove(c2);
+
+        if (obj1 != null)
+        {
+            obj1.transform.SetParent(throwPile.parent, worldPositionStays: true);
+            StartCoroutine(obj1.GetComponent<GCCardDisplay>()
+                ?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
+                ?? EmptyCoroutine());
+        }
+        if (obj2 != null)
+        {
+            obj2.transform.SetParent(throwPile.parent, worldPositionStays: true);
+            StartCoroutine(obj2.GetComponent<GCCardDisplay>()
+                ?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
+                ?? EmptyCoroutine());
+        }
+
+        TintThrowPile(obj1, obj2);
+        SetTurnText("Pair discarded! Select next pair.");
+
+        yield return new WaitForSeconds(slideAnimDuration + 0.3f);
+
+        _waitingForInitialSelect = false;
     }
 
     IEnumerator AnimateCardToThrowPile(int playerIndex, Card card)
@@ -209,7 +406,6 @@ public class GCGameManager : MonoBehaviour
 
     // ── Tint helpers ──────────────────────────────────────────────────────────
 
-    // Tints all current pile cards yellow (called after deal phase)
     void TintAllPileCardsYellow()
     {
         foreach (Transform child in throwPile.parent)
@@ -222,8 +418,6 @@ public class GCGameManager : MonoBehaviour
         _lastThrownB = null;
     }
 
-    // Call after each pair is thrown during gameplay:
-    // previous top cards go yellow, new cards stay white
     void TintThrowPile(GameObject newA, GameObject newB)
     {
         Color lightYellow = new Color(1f, 0.95f, 0.75f, 1f);
@@ -310,11 +504,9 @@ public class GCGameManager : MonoBehaviour
         if (handAreas == null || playerIndex >= handAreas.Length) yield break;
         Transform area = handAreas[playerIndex];
 
-        // Bring to front when scaling up, send back when scaling down
+        // Bring to front when scaling up only
         if (targetScale > 1f)
             area.SetAsLastSibling();
-        else
-            area.SetAsFirstSibling();
 
         Vector3 fromScale = area.localScale;
         Vector3 toScale = Vector3.one * targetScale;
@@ -363,40 +555,42 @@ public class GCGameManager : MonoBehaviour
 
         if (pairMatchCard != null)
         {
-            // Add picked card to hand
             allHands[0].Add(pickedCard);
             GameObject pickedObj = Instantiate(cardPrefab, handAreas[0]);
             GCCardDisplay pickedDisp = pickedObj.GetComponent<GCCardDisplay>();
             pickedDisp?.SetupFaceUp(pickedCard, this);
             allHandUI[0][pickedCard] = pickedObj;
 
-            // Pop animation on picked card
             if (pickedDisp != null)
                 yield return StartCoroutine(pickedDisp.PopAnimation());
 
-            // Highlight BOTH pair cards yellow
-            pickedDisp?.SetPairHighlight(true);
+            // Get match card display
+            GCCardDisplay matchDisp = null;
             if (allHandUI[0].ContainsKey(pairMatchCard))
-            {
-                GCCardDisplay md = allHandUI[0][pairMatchCard].GetComponent<GCCardDisplay>();
-                md?.SetupSelectablePair(pairMatchCard, this, 0);
-                md?.SetPairHighlight(true);
-            }
-            pickedDisp?.SetupSelectablePair(pickedCard, this, 0);
-            pickedDisp?.SetPairHighlight(true);
+                matchDisp = allHandUI[0][pairMatchCard].GetComponent<GCCardDisplay>();
 
-            SetTurnText($"Pair of {pickedCard.rank}s! Click a highlighted card to discard.");
+            // Setup both as gameplay pairs pointing to each other
+            pickedDisp?.SetupGameplayPair(pickedCard, this, matchDisp);
+            matchDisp?.SetupGameplayPair(pairMatchCard, this, pickedDisp);
+
+            // Set partner references cross-way
+            pickedDisp?.SetDragPartner(matchDisp);
+            matchDisp?.SetDragPartner(pickedDisp);
+
+            // Highlight both yellow
+            pickedDisp?.SetPairHighlight(true);
+            matchDisp?.SetPairHighlight(true);
+
+            SetTurnText($"Pair of {pickedCard.rank}s! Click or drag to throw pile.");
 
             waitingForPairDiscard = true;
             while (waitingForPairDiscard) yield return null;
         }
         else
         {
-            // No pair — add to hand and pop briefly
             allHands[0].Add(pickedCard);
             SpawnCardInHand(0, pickedCard, faceUp: true);
 
-            // Pop the newly added card
             if (allHandUI[0].ContainsKey(pickedCard))
             {
                 GCCardDisplay newDisp = allHandUI[0][pickedCard].GetComponent<GCCardDisplay>();
@@ -414,10 +608,47 @@ public class GCGameManager : MonoBehaviour
         waitingForHuman = false;
     }
 
+    // Called by click OR drag-drop on both initial pairs and gameplay pairs
     public void OnPairCardSelected(Card card)
     {
-        if (!waitingForPairDiscard) return;
-        StartCoroutine(DiscardHumanPair());
+        if (waitingForInitialDiscard)
+        {
+            StartCoroutine(DiscardInitialPair());
+            return;
+        }
+        if (waitingForPairDiscard)
+            StartCoroutine(DiscardHumanPair());
+    }
+
+    IEnumerator DiscardInitialPair()
+    {
+        Card c1 = pickedCard;
+        Card c2 = pairMatchCard;
+
+        allHands[0].Remove(c1);
+        allHands[0].Remove(c2);
+
+        GameObject thrownA = null;
+        GameObject thrownB = null;
+        bool first = true;
+
+        foreach (Card c in new[] { c1, c2 })
+        {
+            if (!allHandUI[0].ContainsKey(c)) continue;
+            GameObject obj = allHandUI[0][c];
+            allHandUI[0].Remove(c);
+            obj.transform.SetParent(throwPile.parent, worldPositionStays: true);
+            StartCoroutine(obj.GetComponent<GCCardDisplay>()
+                ?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
+                ?? EmptyCoroutine());
+            if (first) { thrownA = obj; first = false; }
+            else thrownB = obj;
+        }
+
+        TintThrowPile(thrownA, thrownB);
+        yield return new WaitForSeconds(slideAnimDuration + 0.3f);
+
+        waitingForInitialDiscard = false;
     }
 
     IEnumerator DiscardHumanPair()
@@ -600,6 +831,8 @@ public class GCGameManager : MonoBehaviour
         ClearThrowPile();
         gameEnded = false;
         waitingForHuman = false;
+        waitingForInitialDiscard = false;
+        waitingForPairDiscard = false;
         _pickModeActive = false;
         currentTurnIndex = 0;
         _lastThrownA = null;
@@ -621,8 +854,6 @@ public class GCGameManager : MonoBehaviour
         }
         foreach (var go in toDestroy) Destroy(go);
     }
-
-    // ── UI ────────────────────────────────────────────────────────────────────
 
     void SetTurnText(string text)
     {
