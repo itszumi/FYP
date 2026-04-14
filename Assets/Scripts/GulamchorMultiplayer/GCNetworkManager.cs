@@ -16,8 +16,8 @@ public class GCNetworkManager : MonoBehaviourPunCallbacks
     public static GCNetworkManager Instance { get; private set; }
 
     [Header("Scene Names")]
-    public string lobbyScene = "GCMultiplayerLobby";
-    public string gameScene = "GCMultiplayer";
+    public string lobbyScene = "MultiplayerLobby";
+    public string gameScene = "GulamchorMultiplayer";
 
     [Header("Room Settings")]
     public int maxPlayers = 5;

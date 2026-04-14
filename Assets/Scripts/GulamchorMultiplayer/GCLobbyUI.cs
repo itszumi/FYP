@@ -222,7 +222,7 @@ public class GCLobbyUI : MonoBehaviour
         TextMeshProUGUI nameText = row.transform.Find("NameText")?.GetComponent<TextMeshProUGUI>();
         if (nameText != null)
             nameText.text = GetDisplayName(player) +
-                (player.IsMasterClient ? " 👑" : "") +
+                (player.IsMasterClient ? "[Host]" : "") +
                 (player.IsLocal ? " (You)" : "");
     }
 
