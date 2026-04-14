@@ -26,7 +26,7 @@ using UnityEngine.SceneManagement;
 using TMPro;
 using Photon.Pun;
 using Photon.Realtime;
-using ExitGames.Client.Photon;
+using Hashtable = ExitGames.Client.Photon.Hashtable;
 
 public class GCLobbyUI : MonoBehaviour
 {
@@ -66,7 +66,12 @@ public class GCLobbyUI : MonoBehaviour
 
     void Start()
     {
-        ShowPanel(mainPanel);
+        // Force all panels to correct initial state
+        if (mainPanel) mainPanel.SetActive(true);
+        if (waitingPanel) waitingPanel.SetActive(false);
+        if (loadingPanel) loadingPanel.SetActive(false);
+        if (startGameBtn) startGameBtn.gameObject.SetActive(false);
+
         if (errorText) errorText.text = "";
 
         // Pre-fill username from PlayerSession
@@ -91,6 +96,13 @@ public class GCLobbyUI : MonoBehaviour
             GCNetworkManager.Instance.OnPlayerJoinedCallback = OnPlayerJoined;
             GCNetworkManager.Instance.OnPlayerLeftCallback = OnPlayerLeft;
             GCNetworkManager.Instance.OnGameStartingCallback = OnGameStarting;
+        }
+
+        // If already in a room (e.g. scene reloaded), show waiting panel immediately
+        if (PhotonNetwork.InRoom)
+        {
+            ShowWaitingPanel(PhotonNetwork.CurrentRoom.Name);
+            RefreshAllPlayers();
         }
     }
 
@@ -183,8 +195,8 @@ public class GCLobbyUI : MonoBehaviour
 
     void OnPlayerJoined(Player player)
     {
-        AddPlayerRow(player);
-        UpdateStartButton();
+        // Refresh all rows so host label updates correctly
+        RefreshAllPlayers();
         ShowStatusText($"{GetDisplayName(player)} joined!");
     }
 
@@ -222,7 +234,7 @@ public class GCLobbyUI : MonoBehaviour
         TextMeshProUGUI nameText = row.transform.Find("NameText")?.GetComponent<TextMeshProUGUI>();
         if (nameText != null)
             nameText.text = GetDisplayName(player) +
-                (player.IsMasterClient ? "[Host]" : "") +
+                (player.IsMasterClient ? " [Host]" : "") +
                 (player.IsLocal ? " (You)" : "");
     }
 
@@ -262,9 +274,10 @@ public class GCLobbyUI : MonoBehaviour
 
     void ShowPanel(GameObject panel)
     {
-        if (mainPanel) mainPanel.SetActive(mainPanel == panel);
-        if (waitingPanel) waitingPanel.SetActive(waitingPanel == panel);
-        if (loadingPanel) loadingPanel.SetActive(loadingPanel == panel);
+        if (mainPanel) mainPanel.SetActive(false);
+        if (waitingPanel) waitingPanel.SetActive(false);
+        if (loadingPanel) loadingPanel.SetActive(false);
+        if (panel) panel.SetActive(true);
     }
 
     void ShowLoading(string msg)
