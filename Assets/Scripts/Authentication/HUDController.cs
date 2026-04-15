@@ -1,13 +1,18 @@
 ﻿// HUDController.cs
-// Matches your exact HUD hierarchy:
-//   HUDCanvas
-//     Panel
-//       Image     ← avatar (exact GameObject name "Image")
-//       Username  ← username label (exact GameObject name "Username")
-//
-// Only "Panel" is dragged in. Image and Username are found by name automatically.
+// HUD with sprite-based Pause / Back / Resume buttons.
 // Persists across all scenes via DontDestroyOnLoad.
-// Auto-hides on scenes listed in hiddenScenes[].
+//
+// HUD Hierarchy:
+//   HUDCanvas
+//     HUDPanel
+//       LeftBtn          ← Button with Image component (shows pause OR back sprite)
+//       RightSection
+//         Username       ← TextMeshProUGUI
+//         AvatarImage    ← Image
+//     PausePanel         ← hidden by default
+//       ResumeBtn        ← Button with resume sprite
+//       RestartBtn       ← Button with restart sprite
+//       HomeBtn          ← Button with home sprite
 
 using UnityEngine;
 using UnityEngine.UI;
@@ -18,84 +23,160 @@ public class HUDController : MonoBehaviour
 {
     public static HUDController Instance { get; private set; }
 
-    [Header("HUD Root")]
-    [Tooltip("Drag the 'Panel' child of HUDCanvas here.")]
+    [Header("HUD Panel")]
     public GameObject hudPanel;
 
-    [Header("Scenes where HUD is hidden")]
-    public string[] hiddenScenes = { "Login", "Splash", "Boot" };
+    [Header("Left Button (Pause in game / Back in menus)")]
+    public Button leftBtn;
+    public Image leftBtnImage;   // Image on the button — we swap sprites
+    public Sprite pauseSprite;
+    public Sprite resumeSprite;
+    public Sprite backSprite;
 
-    // Found automatically by GameObject name
-    private Image _avatarImage;
-    private TextMeshProUGUI _usernameText;
+    [Header("Avatar + Username")]
+    public Image avatarImage;
+    public TextMeshProUGUI usernameText;
 
-    // ─────────────────────────────────────────────────────────────────────────
+    [Header("Pause Panel")]
+    public GameObject pausePanel;
+    public Button resumeBtn;
+    public Button restartBtn;
+    public Button homeBtn;
 
-    private void Awake()
+    [Header("Scene Classification")]
+    public string[] hiddenScenes = { "Login" };
+    public string[] menuScenes = { "Menu", "Game Selection", "MultiplayerLobby" };
+    public string homeScene = "Menu";
+
+    private bool _isPaused = false;
+
+    // ── Unity ─────────────────────────────────────────────────────────────────
+
+    void Awake()
     {
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
         DontDestroyOnLoad(gameObject);
-
-        FindChildren();
     }
 
-    private void Start() => Refresh();
-
-    private void OnEnable() => SceneManager.sceneLoaded += OnSceneLoaded;
-    private void OnDisable() => SceneManager.sceneLoaded -= OnSceneLoaded;
-
-    // ── Find children by their exact GameObject names ─────────────────────────
-
-    private void FindChildren()
+    void Start()
     {
-        if (hudPanel == null) { Debug.LogError("HUDController: Hud Panel not assigned!"); return; }
+        leftBtn?.onClick.AddListener(OnLeftButtonClicked);
+        resumeBtn?.onClick.AddListener(ResumeGame);
+        restartBtn?.onClick.AddListener(RestartGame);
+        homeBtn?.onClick.AddListener(GoHome);
 
-        // Matches your hierarchy: Panel > Image, Panel > Username
-        Transform imgT = hudPanel.transform.Find("Image");
-        Transform userT = hudPanel.transform.Find("Username");
-
-        if (imgT != null) _avatarImage = imgT.GetComponent<Image>();
-        if (userT != null) _usernameText = userT.GetComponent<TextMeshProUGUI>();
-
-        if (_avatarImage == null) Debug.LogWarning("HUDController: Child 'Image' (Image component) not found in Panel.");
-        if (_usernameText == null) Debug.LogWarning("HUDController: Child 'Username' (TextMeshProUGUI) not found in Panel.");
+        if (pausePanel) pausePanel.SetActive(false);
+        Refresh();
     }
 
-    // ── Scene load ────────────────────────────────────────────────────────────
+    void OnEnable() => SceneManager.sceneLoaded += OnSceneLoaded;
+    void OnDisable() => SceneManager.sceneLoaded -= OnSceneLoaded;
 
-    private void OnSceneLoaded(Scene scene, LoadSceneMode mode) => Refresh();
+    void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        Time.timeScale = 1f;
+        _isPaused = false;
+        if (pausePanel) pausePanel.SetActive(false);
+        Refresh();
+    }
 
-    // ── Public Refresh ────────────────────────────────────────────────────────
+    // ── Refresh ───────────────────────────────────────────────────────────────
 
-    /// <summary>Call after login or avatar selection to update avatar + username.</summary>
     public void Refresh()
     {
-        bool shouldShow = PlayerSession.IsLoggedIn() && !IsHiddenScene();
-        hudPanel.SetActive(shouldShow);
-        if (!shouldShow) return;
+        string scene = SceneManager.GetActiveScene().name;
+        bool loggedIn = PlayerSession.IsLoggedIn();
+        bool hide = IsInList(scene, hiddenScenes);
 
-        // Username — pulled from PlayerSession (set during login/register)
-        if (_usernameText != null)
-            _usernameText.text = PlayerSession.GetUser();
+        if (hudPanel) hudPanel.SetActive(loggedIn && !hide);
+        if (!loggedIn || hide) return;
 
-        // Avatar — index stored in PlayerPrefs via LocalAuth.SaveAvatar()
-        if (_avatarImage != null && AvatarManager.Instance != null)
+        // Avatar
+        if (avatarImage != null && AvatarManager.Instance != null)
         {
-            int idx = LocalAuth.GetAvatar(PlayerSession.GetUser()); // always read latest from prefs
-            PlayerSession.SetUser(PlayerSession.GetUser(), idx);    // keep session in sync
-            _avatarImage.sprite = AvatarManager.Instance.GetSprite(idx);
+            int idx = LocalAuth.GetAvatar(PlayerSession.GetUser());
+            PlayerSession.SetUser(PlayerSession.GetUser(), idx);
+            avatarImage.sprite = AvatarManager.Instance.GetSprite(idx);
         }
-        Debug.Log($"[HUD] IsLoggedIn={PlayerSession.IsLoggedIn()} | User={PlayerSession.GetUser()} | AvatarIdx={PlayerSession.GetAvatarIndex()} | AvatarManager={AvatarManager.Instance != null} | Sprite={AvatarManager.Instance?.GetSprite(PlayerSession.GetAvatarIndex())?.name}");
+
+        // Username
+        if (usernameText != null)
+            usernameText.text = PlayerSession.GetUser();
+
+        // Left button sprite
+        bool isMenu = IsInList(scene, menuScenes);
+        if (leftBtn != null)
+        {
+            // Hide back button on the home scene itself
+            bool show = isMenu ? scene != homeScene : true;
+            leftBtn.gameObject.SetActive(show);
+
+            if (leftBtnImage != null)
+                leftBtnImage.sprite = isMenu ? backSprite : pauseSprite;
+        }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ── Left button ───────────────────────────────────────────────────────────
 
-    private bool IsHiddenScene()
+    void OnLeftButtonClicked()
     {
-        string current = SceneManager.GetActiveScene().name;
-        foreach (string s in hiddenScenes)
-            if (string.Equals(current, s, System.StringComparison.OrdinalIgnoreCase))
+        string scene = SceneManager.GetActiveScene().name;
+        bool isMenu = IsInList(scene, menuScenes);
+
+        if (isMenu) GoBack();
+        else TogglePause();
+    }
+
+    void GoBack() { Time.timeScale = 1f; SceneManager.LoadScene(homeScene); }
+
+    void TogglePause()
+    {
+        if (_isPaused) ResumeGame();
+        else PauseGame();
+    }
+
+    // ── Pause / Resume ────────────────────────────────────────────────────────
+
+    public void PauseGame()
+    {
+        _isPaused = true;
+        Time.timeScale = 0f;
+        if (pausePanel) pausePanel.SetActive(true);
+        if (leftBtnImage && resumeSprite) leftBtnImage.sprite = resumeSprite;
+    }
+
+    public void ResumeGame()
+    {
+        _isPaused = false;
+        Time.timeScale = 1f;
+        if (pausePanel) pausePanel.SetActive(false);
+        if (leftBtnImage && pauseSprite) leftBtnImage.sprite = pauseSprite;
+    }
+
+    public void RestartGame()
+    {
+        Time.timeScale = 1f;
+        _isPaused = false;
+        if (pausePanel) pausePanel.SetActive(false);
+        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+    }
+
+    public void GoHome()
+    {
+        Time.timeScale = 1f;
+        _isPaused = false;
+        if (pausePanel) pausePanel.SetActive(false);
+        SceneManager.LoadScene(homeScene);
+    }
+
+    // ── Helper ────────────────────────────────────────────────────────────────
+
+    bool IsInList(string scene, string[] list)
+    {
+        if (list == null) return false;
+        foreach (string s in list)
+            if (string.Equals(scene, s, System.StringComparison.OrdinalIgnoreCase))
                 return true;
         return false;
     }

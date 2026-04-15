@@ -1467,7 +1467,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: -53.208008, y: 256.531}
+  m_AnchoredPosition: {x: 13, y: 251}
   m_SizeDelta: {x: 618.4161, y: 118.938}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1109619188
@@ -2323,8 +2323,13 @@ MonoBehaviour:
   - {fileID: 64153428}
   - {fileID: 1790995533}
   - {fileID: 491409859}
+  statusTMP: {fileID: 0}
   statusText: {fileID: 1109619188}
   showButton: {fileID: 1147560806}
+  winPanel: {fileID: 0}
+  winTitleText: {fileID: 0}
+  winDetailText: {fileID: 0}
+  playAgainBtn: {fileID: 0}
   currencyUI: {fileID: 1929505749}
 --- !u!224 &1644661767
 RectTransform:
@@ -3217,7 +3222,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &2002403019
 RectTransform:
   m_ObjectHideFlags: 0
@@ -3234,8 +3239,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 1, y: 1}
   m_AnchorMax: {x: 1, y: 1}
-  m_AnchoredPosition: {x: -131.80566, y: -100.24652}
-  m_SizeDelta: {x: 81.5145, y: 79.6362}
+  m_AnchoredPosition: {x: -114.87744, y: -86.91687}
+  m_SizeDelta: {x: 63.2769, y: 65.2756}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &2002403020
 MonoBehaviour:

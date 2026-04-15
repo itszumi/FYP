@@ -1,16 +1,26 @@
-
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
 
 public class TinPattiManager : MonoBehaviour
 {
     public TinPattiDeck deck;
     public GameObject cardPrefab;
     public Transform[] playerAreas;
-    public Text statusText;
+
+    [Header("Status — use TextMeshProUGUI for best styling")]
+    public TextMeshProUGUI statusTMP;   // assign TMP version in Inspector
+    public Text statusText;             // legacy fallback (assign if no TMP)
+
     public Button showButton;
+
+    [Header("Win Panel (optional — nicer than status text)")]
+    public GameObject winPanel;        // a separate panel that slides in
+    public TextMeshProUGUI winTitleText;   // big bold title "YOU WIN!" / "BOT 3 WINS!"
+    public TextMeshProUGUI winDetailText;  // optional subtitle
+    public Button playAgainBtn;
 
     [Header("Coin UI to refresh after result (optional)")]
     public CurrencyUI currencyUI;
@@ -21,20 +31,22 @@ public class TinPattiManager : MonoBehaviour
     void Start()
     {
         showButton.interactable = false;
-        statusText.text = "READY";
+        SetStatus("READY", Color.white);
+        if (winPanel) winPanel.SetActive(false);
+        playAgainBtn?.onClick.AddListener(StartGame);
     }
 
     public void StartGame()
     {
         StopAllCoroutines();
-        statusText.text = "DEALING...";
-        statusText.color = Color.white;
+        SetStatus("DEALING...", Color.white);
+        if (winPanel) winPanel.SetActive(false);
 
-        // Clear Table
-        foreach (var area in playerAreas) { foreach (Transform child in area) Destroy(child.gameObject); }
+        foreach (var area in playerAreas)
+            foreach (Transform child in area) Destroy(child.gameObject);
+
         allHands.Clear();
         allDisplays.Clear();
-
         deck.CreateDeck();
 
         for (int i = 0; i < 5; i++)
@@ -48,7 +60,7 @@ public class TinPattiManager : MonoBehaviour
 
     IEnumerator DealCards()
     {
-        for (int round = 0; round < 3; round++) // Exactly 3 rounds
+        for (int round = 0; round < 3; round++)
         {
             for (int p = 0; p < 5; p++)
             {
@@ -57,13 +69,13 @@ public class TinPattiManager : MonoBehaviour
 
                 GameObject obj = Instantiate(cardPrefab, playerAreas[p]);
                 CardDisplayTinPatti disp = obj.GetComponent<CardDisplayTinPatti>();
-                disp.Setup(c, this, (p == 0)); // Only player (0) is face up
+                disp.Setup(c, this, (p == 0));
                 allDisplays[p].Add(disp);
 
                 yield return new WaitForSeconds(0.15f);
             }
         }
-        statusText.text = "TAP SHOW";
+        SetStatus("TAP SHOW", Color.white);
         showButton.interactable = true;
     }
 
@@ -76,25 +88,49 @@ public class TinPattiManager : MonoBehaviour
         for (int i = 0; i < 5; i++)
         {
             foreach (var disp in allDisplays[i]) disp.FlipToFront();
-
             int score = TeenPattiEvaluator.GetHandScore(allHands[i]);
-            if (score > bestScore)
-            {
-                bestScore = score;
-                winnerIndex = i;
-            }
+            if (score > bestScore) { bestScore = score; winnerIndex = i; }
         }
 
-        statusText.text = (winnerIndex == 0) ? "YOU WIN!" : "BOT " + winnerIndex + " WINS!";
-        statusText.color = Color.yellow;
+        bool humanWon = winnerIndex == 0;
+        string title = humanWon ? "YOU WIN!" : $"BOT {winnerIndex} WINS!";
+        string detail = humanWon ? "Great hand! Coins added." : "Better luck next time!";
 
-        if (winnerIndex == 0)
-            CurrencyManager.OnWin();
+        // Show win panel if available (preferred)
+        if (winPanel != null)
+        {
+            winPanel.SetActive(true);
+            if (winTitleText != null)
+            {
+                winTitleText.text = title;
+                // Gold for win, red-ish for loss
+                winTitleText.color = humanWon
+                    ? new Color(1f, 0.84f, 0f)     // gold
+                    : new Color(1f, 0.35f, 0.35f);  // soft red
+            }
+            if (winDetailText != null)
+                winDetailText.text = detail;
+        }
         else
-            CurrencyManager.OnLose();
+        {
+            // Fallback — style the status text nicely
+            Color col = humanWon
+                ? new Color(1f, 0.84f, 0f)
+                : new Color(1f, 0.35f, 0.35f);
+            SetStatus(title, col);
+        }
 
-        // Refresh on-screen coin display
-        if (currencyUI != null)
-            currencyUI.Refresh();
+        if (humanWon) CurrencyManager.OnWin();
+        else CurrencyManager.OnLose();
+
+        if (currencyUI != null) currencyUI.Refresh();
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    void SetStatus(string msg, Color col)
+    {
+        if (statusTMP != null) { statusTMP.text = msg; statusTMP.color = col; }
+        if (statusText != null) { statusText.text = msg; statusText.color = col; }
     }
 }
