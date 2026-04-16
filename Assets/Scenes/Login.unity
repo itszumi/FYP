@@ -2707,7 +2707,7 @@ MonoBehaviour:
   hudPanel: {fileID: 1392510111}
   leftBtn: {fileID: 1654675618}
   leftBtnImage: {fileID: 1654675617}
-  pauseSprite: {fileID: -6706267312972493342, guid: d19c38e5a929da7419d3173e197c89ea, type: 3}
+  pauseSprite: {fileID: -2403637333194882535, guid: 5136e096cdfc4674dad89389f08247e3, type: 3}
   resumeSprite: {fileID: -9190759873615038455, guid: f541017f89e46d44fb83549e6d5d8c2a, type: 3}
   backSprite: {fileID: 1707025640887900825, guid: 3271917c9a4053a45b1ba19b2d7d4012, type: 3}
   avatarImage: {fileID: 1155259242}
@@ -4712,7 +4712,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 3318933014852298229, guid: 03fd52b78f2c9f449a9d02d44688ac61, type: 3}
+  m_Sprite: {fileID: -7108955927604302331, guid: 93c5fb3e347875f40900f4e28220e533, type: 3}
   m_Type: 0
   m_PreserveAspect: 0
   m_FillCenter: 1
@@ -4832,7 +4832,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: -9190759873615038455, guid: f541017f89e46d44fb83549e6d5d8c2a, type: 3}
+  m_Sprite: {fileID: -4287216300838241123, guid: 6846469506fc776468fdd7b89d20ff30, type: 3}
   m_Type: 0
   m_PreserveAspect: 0
   m_FillCenter: 1
@@ -6505,7 +6505,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 5397759385407952218, guid: 21878ed2d241e4b41aeea19ce01cd698, type: 3}
+  m_Sprite: {fileID: 7579732621468621710, guid: 1a295bf1c7a4e1c42ba7afd4bb8f5851, type: 3}
   m_Type: 0
   m_PreserveAspect: 0
   m_FillCenter: 1
