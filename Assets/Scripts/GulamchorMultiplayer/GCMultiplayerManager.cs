@@ -191,32 +191,27 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
     {
         int playerCount = _playerOrder.Count;
 
-        // First hide all areas
+        // Hide all areas first
         for (int i = 0; i < (handAreas?.Length ?? 0); i++)
         {
-            if (handAreas[i] != null)
-                handAreas[i].gameObject.SetActive(false);
+            if (handAreas[i] != null) handAreas[i].gameObject.SetActive(false);
             if (playerNameLabels != null && i < playerNameLabels.Length && playerNameLabels[i] != null)
                 playerNameLabels[i].gameObject.SetActive(false);
             if (playerCardCountLabels != null && i < playerCardCountLabels.Length && playerCardCountLabels[i] != null)
                 playerCardCountLabels[i].gameObject.SetActive(false);
         }
 
-        // Activate only the seats in use
+        // Show only active seats
         for (int i = 0; i < playerCount && i < (handAreas?.Length ?? 0); i++)
         {
-            if (handAreas[i] != null)
-                handAreas[i].gameObject.SetActive(true);
+            if (handAreas[i] != null) handAreas[i].gameObject.SetActive(true);
             if (playerNameLabels != null && i < playerNameLabels.Length && playerNameLabels[i] != null)
                 playerNameLabels[i].gameObject.SetActive(true);
             if (playerCardCountLabels != null && i < playerCardCountLabels.Length && playerCardCountLabels[i] != null)
                 playerCardCountLabels[i].gameObject.SetActive(true);
         }
 
-        // Reposition hand areas based on player count
-        PositionHandAreas(playerCount);
-
-        // Set player name labels
+        // Set name labels
         for (int i = 0; i < playerCount && i < (playerNameLabels?.Length ?? 0); i++)
         {
             if (playerNameLabels[i] == null) continue;
@@ -224,70 +219,21 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
             string name = p != null ? GetDisplayName(p) : $"Player {i + 1}";
             playerNameLabels[i].text = (i == 0) ? $"{name} (You)" : name;
         }
-    }
 
-    // Reposition hand areas dynamically based on player count
-    void PositionHandAreas(int playerCount)
-    {
-        if (handAreas == null) return;
-
-        // Screen dimensions reference (1920x1080 base)
-        // Positions: [0]=local(bottom), [1..N-1]=opponents
-        // Layout depends on count:
-        // 2 players: bottom + top
-        // 3 players: bottom + top-left + top-right
-        // 4 players: bottom + left + right + top
-        // 5 players: bottom + top-left + top-right + mid-left + mid-right
-
-        Vector2[][] layouts = new Vector2[][]
-        {
-            // 2 players: [local=bottom, p1=top]
-            new Vector2[] {
-                new Vector2(0, -300),   // bottom center
-                new Vector2(0,  300),   // top center
-            },
-            // 3 players: [local=bottom, p1=top-left, p2=top-right]
-            new Vector2[] {
-                new Vector2(  0, -300),
-                new Vector2(-400, 250),
-                new Vector2( 400, 250),
-            },
-            // 4 players: [local=bottom, p1=left, p2=right, p3=top]
-            new Vector2[] {
-                new Vector2(  0, -300),
-                new Vector2(-500,   0),
-                new Vector2( 500,   0),
-                new Vector2(  0,  300),
-            },
-            // 5 players: [local=bottom, p1=top-left, p2=top-right, p3=mid-left, p4=mid-right]
-            new Vector2[] {
-                new Vector2(  0, -300),
-                new Vector2(-400,  280),
-                new Vector2( 400,  280),
-                new Vector2(-500,    0),
-                new Vector2( 500,    0),
-            },
-        };
-
-        if (playerCount < 2 || playerCount > 5) return;
-        Vector2[] positions = layouts[playerCount - 2];
-
-        for (int i = 0; i < playerCount && i < handAreas.Length; i++)
+        // NOTE: Hand area RectTransforms are set in Unity Inspector — we don't touch them here
+        // Just make sure HorizontalLayoutGroup settings are correct on each hand area
+        for (int i = 0; i < playerCount && i < (handAreas?.Length ?? 0); i++)
         {
             if (handAreas[i] == null) continue;
-            RectTransform rt = handAreas[i].GetComponent<RectTransform>();
-            if (rt == null) continue;
-
-            // Set anchor to center
-            rt.anchorMin = new Vector2(0.5f, 0.5f);
-            rt.anchorMax = new Vector2(0.5f, 0.5f);
-            rt.pivot = new Vector2(0.5f, 0.5f);
-            rt.anchoredPosition = positions[i];
-
-            // Adjust layout group spacing/size based on expected card count
-            // More cards = smaller card size
             var hlg = handAreas[i].GetComponent<UnityEngine.UI.HorizontalLayoutGroup>();
-            if (hlg != null) hlg.spacing = playerCount <= 2 ? 3f : 2f;
+            if (hlg != null)
+            {
+                hlg.childAlignment = TextAnchor.MiddleCenter;
+                hlg.childForceExpandWidth = false;
+                hlg.childForceExpandHeight = false;
+                hlg.childControlWidth = false;
+                hlg.childControlHeight = false;
+            }
         }
     }
 
@@ -377,41 +323,52 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         foreach (Card c in _myHand)
             SpawnMyCard(c);
 
-        // Enable pair selection
-        EnableInitialPairSelection();
-        SetTurnText("Select your pairs to discard!");
+        // Scale all cards to fit screen AFTER all are spawned
+        ScaleAllHandCards();
 
         // Tell everyone my initial card count
         photonView.RPC("RPC_SetOpponentCount", RpcTarget.Others,
             PhotonNetwork.LocalPlayer.ActorNumber, _myHand.Count);
 
-        // If no pairs at all, signal ready immediately
-        CheckIfInitialDiscardComplete();
+        // Start initial discard phase with a short delay so player sees their cards
+        StartCoroutine(BeginInitialDiscardPhase());
     }
 
-    void OnDoneDiscarding()
+    IEnumerator BeginInitialDiscardPhase()
     {
-        SetTurnText("Waiting for other players...");
+        // Give player 1 second to see their cards before enabling interaction
+        yield return new WaitForSeconds(1f);
 
-        // Update count for others
-        photonView.RPC("RPC_SetOpponentCount", RpcTarget.Others,
-            PhotonNetwork.LocalPlayer.ActorNumber, _myHand.Count);
-
-        // Signal master client we are ready
-        photonView.RPC("RPC_PlayerReadyToStart", RpcTarget.MasterClient);
-    }
-
-    // Check if hand has any pairs left — if not, auto-signal ready
-    void CheckIfInitialDiscardComplete()
-    {
-        // Check if any pairs remain in hand
-        bool hasPairs = false;
-        for (int i = 0; i < _myHand.Count && !hasPairs; i++)
-            for (int j = i + 1; j < _myHand.Count && !hasPairs; j++)
-                if (_myHand[i].rank == _myHand[j].rank)
-                    hasPairs = true;
+        // Check if player has any pairs at all
+        bool hasPairs = HasAnyPairs(_myHand);
 
         if (!hasPairs)
+        {
+            // No pairs - signal ready immediately
+            SetTurnText("No pairs to discard! Waiting for others...");
+            photonView.RPC("RPC_PlayerReadyToStart", RpcTarget.MasterClient);
+        }
+        else
+        {
+            // Has pairs - enable selection and wait for player to discard all
+            EnableInitialPairSelection();
+            SetTurnText("Select your pairs to discard!");
+        }
+    }
+
+    bool HasAnyPairs(List<Card> hand)
+    {
+        for (int i = 0; i < hand.Count; i++)
+            for (int j = i + 1; j < hand.Count; j++)
+                if (hand[i].rank == hand[j].rank)
+                    return true;
+        return false;
+    }
+
+    // Check if hand has any pairs left — called after each discard
+    void CheckIfInitialDiscardComplete()
+    {
+        if (!HasAnyPairs(_myHand))
         {
             SetTurnText("No more pairs! Waiting for other players...");
             photonView.RPC("RPC_SetOpponentCount", RpcTarget.Others,
@@ -866,6 +823,9 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
 
         yield return new WaitForSeconds(slideAnimDuration + 0.3f);
 
+        // Rescale remaining cards
+        ScaleAllHandCards();
+
         // Auto-check if all pairs discarded
         CheckIfInitialDiscardComplete();
     }
@@ -877,7 +837,7 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         int seat = _actorToSeat.ContainsKey(actorNumber) ? _actorToSeat[actorNumber] : -1;
         if (seat < 1 || seat >= handAreas.Length || handAreas[seat] == null) return;
 
-        // Destroy old face-down cards
+        // Destroy old cards
         if (_opponentCardGOs.ContainsKey(actorNumber))
         {
             foreach (var go in _opponentCardGOs[actorNumber])
@@ -887,13 +847,18 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         else
             _opponentCardGOs[actorNumber] = new List<GameObject>();
 
-        // Spawn new face-down cards
+        if (count == 0) return;
+
+        // Spawn face-down cards
         for (int i = 0; i < count; i++)
         {
             GameObject obj = Instantiate(cardPrefab, handAreas[seat]);
             obj.GetComponent<GCCardDisplay>()?.SetupAICard(new Card("?", "?", null));
             _opponentCardGOs[actorNumber].Add(obj);
         }
+
+        // Apply same fit calculation as player hand
+        StartCoroutine(ApplyHandFit(handAreas[seat]));
     }
 
     void MakeOpponentCardsClickable(int actorNumber, bool clickable)
@@ -914,47 +879,67 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
     {
         if (handAreas == null || handAreas.Length == 0 || handAreas[0] == null) return null;
         if (cardPrefab == null) return null;
-
         GameObject obj = Instantiate(cardPrefab, handAreas[0]);
-        GCCardDisplay disp = obj.GetComponent<GCCardDisplay>();
-        disp?.SetupFaceUp(c, null);
+        obj.GetComponent<GCCardDisplay>()?.SetupFaceUp(c, null);
         _myHandUI[c] = obj;
-
-        // Scale cards smaller if hand is large
-        ScaleHandCards();
         return obj;
     }
 
-    void ScaleHandCards()
+    // Call after ALL cards spawned — calculates exact spacing to fit within hand area width
+    void ScaleAllHandCards()
     {
         if (handAreas == null || handAreas[0] == null) return;
-        int count = _myHand.Count;
+        int count = handAreas[0].childCount;
+        if (count == 0) return;
 
-        // More aggressive scaling for large hands
-        float scale = 1f;
-        if (count > 20) scale = 0.45f;
-        else if (count > 15) scale = 0.55f;
-        else if (count > 12) scale = 0.65f;
-        else if (count > 9) scale = 0.75f;
-        else if (count > 6) scale = 0.85f;
+        // Wait one frame for layout to update, then calculate
+        StartCoroutine(ApplyHandFit(handAreas[0]));
+    }
 
-        foreach (Transform child in handAreas[0])
-        {
-            RectTransform rt = child.GetComponent<RectTransform>();
-            if (rt != null) rt.localScale = Vector3.one * scale;
-        }
+    IEnumerator ApplyHandFit(Transform area)
+    {
+        yield return null; // wait for RectTransform to update
 
-        // Tighten spacing based on count
-        var hlg = handAreas[0].GetComponent<UnityEngine.UI.HorizontalLayoutGroup>();
+        RectTransform areaRT = area.GetComponent<RectTransform>();
+        if (areaRT == null) yield break;
+
+        // Get actual available width
+        float availableW = areaRT.rect.width;
+        if (availableW <= 0) availableW = 1700f; // fallback
+
+        int count = area.childCount;
+        if (count == 0) yield break;
+
+        // Get card width from first child
+        RectTransform firstCard = area.GetChild(0).GetComponent<RectTransform>();
+        float cardW = firstCard != null ? firstCard.rect.width : 90f;
+        if (cardW <= 0) cardW = 90f;
+
+        float totalCardW = count * cardW;
+
+        // Calculate spacing needed to fit all cards
+        float spacing;
+        if (count <= 1)
+            spacing = 3f;
+        else if (totalCardW <= availableW)
+            spacing = 3f; // cards fit, use normal spacing
+        else
+            // Negative spacing to overlap cards
+            spacing = (availableW - totalCardW) / (count - 1);
+
+        // Clamp so cards don't overlap too much (keep at least 20% visible)
+        spacing = Mathf.Max(spacing, -cardW * 0.8f);
+
+        var hlg = area.GetComponent<UnityEngine.UI.HorizontalLayoutGroup>();
         if (hlg != null)
         {
-            if (count > 20) hlg.spacing = -50f;
-            else if (count > 15) hlg.spacing = -40f;
-            else if (count > 12) hlg.spacing = -30f;
-            else if (count > 9) hlg.spacing = -20f;
-            else if (count > 6) hlg.spacing = -10f;
-            else hlg.spacing = 3f;
+            hlg.spacing = spacing;
+            hlg.childAlignment = TextAnchor.MiddleCenter;
         }
+
+        // Reset all card scales to 1 — spacing handles the fit, not scale
+        foreach (Transform child in area)
+            child.localScale = Vector3.one;
     }
 
     List<(Card, Card)> FindAndRemovePairs(List<Card> hand)
