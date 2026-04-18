@@ -123,6 +123,17 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         BuildPlayerOrder();
         SetupPlayerLabels();
 
+        // Fix throw pile — anchor to canvas center with fixed size
+        // Cards spawn as children of throwPile so position is always relative to throwPile center
+        if (throwPile != null)
+        {
+            throwPile.anchorMin = new Vector2(0.5f, 0.5f);
+            throwPile.anchorMax = new Vector2(0.5f, 0.5f);
+            throwPile.pivot = new Vector2(0.5f, 0.5f);
+            throwPile.anchoredPosition = Vector2.zero;
+            throwPile.sizeDelta = new Vector2(300f, 300f);
+        }
+
         if (PhotonNetwork.IsMasterClient)
             StartCoroutine(DealPhase());
         else
@@ -255,6 +266,10 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         for (int i = 0; i < allCards.Count; i++)
             hands[_playerOrder[i % playerCount]].Add(allCards[i]);
 
+        // Reset ready counter BEFORE sending any RPCs to avoid race condition
+        _playersReadyCount = 0;
+        _totalPlayers = _playerOrder.Count;
+
         // Send each player their hand privately
         foreach (int actor in _playerOrder)
         {
@@ -264,7 +279,7 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
                 photonView.RPC("RPC_ReceiveHand", target, serialized);
         }
 
-        // Tell everyone initial card counts so opponent areas show correct number of face-down cards
+        // Tell everyone initial card counts
         foreach (int actor in _playerOrder)
         {
             photonView.RPC("RPC_SetOpponentCount", RpcTarget.All,
@@ -273,13 +288,8 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
 
         photonView.RPC("RPC_DealComplete", RpcTarget.All);
 
-        // Wait for ALL players to signal they finished discarding
-        // Master client tracks how many players are ready
-        _playersReadyCount = 0;
-        _totalPlayers = _playerOrder.Count;
-
-        // Wait until all players signal ready OR timeout after 60 seconds
-        float timeout = 60f;
+        // Wait until all players signal ready OR timeout after 120 seconds
+        float timeout = 120f;
         float elapsed = 0f;
         while (_playersReadyCount < _totalPlayers && elapsed < timeout)
         {
@@ -292,18 +302,6 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         // Decide who goes first
         int firstActor = _activePlayers.Min();
         photonView.RPC("RPC_StartTurn", RpcTarget.All, firstActor);
-    }
-
-    // Track ready players (Master Client only)
-    private int _playersReadyCount = 0;
-    private int _totalPlayers = 0;
-
-    [PunRPC]
-    void RPC_PlayerReadyToStart()
-    {
-        if (!PhotonNetwork.IsMasterClient) return;
-        _playersReadyCount++;
-        SetTurnText($"Players ready: {_playersReadyCount}/{_totalPlayers}");
     }
 
     // ── RPC: Receive hand ─────────────────────────────────────────────────────
@@ -334,27 +332,10 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         StartCoroutine(BeginInitialDiscardPhase());
     }
 
-    IEnumerator BeginInitialDiscardPhase()
-    {
-        // Give player 1 second to see their cards before enabling interaction
-        yield return new WaitForSeconds(1f);
-
-        // Check if player has any pairs at all
-        bool hasPairs = HasAnyPairs(_myHand);
-
-        if (!hasPairs)
-        {
-            // No pairs - signal ready immediately
-            SetTurnText("No pairs to discard! Waiting for others...");
-            photonView.RPC("RPC_PlayerReadyToStart", RpcTarget.MasterClient);
-        }
-        else
-        {
-            // Has pairs - enable selection and wait for player to discard all
-            EnableInitialPairSelection();
-            SetTurnText("Select your pairs to discard!");
-        }
-    }
+    // Track ready players (Master Client only) — HashSet prevents double-counting
+    private int _playersReadyCount = 0;
+    private int _totalPlayers = 0;
+    private bool _iHaveSignaledReady = false; // prevent this client from signaling twice
 
     bool HasAnyPairs(List<Card> hand)
     {
@@ -365,15 +346,48 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         return false;
     }
 
-    // Check if hand has any pairs left — called after each discard
+    void SignalReadyToStart()
+    {
+        if (_iHaveSignaledReady) return; // never signal twice
+        _iHaveSignaledReady = true;
+        SetTurnText("No more pairs! Waiting for other players...");
+        photonView.RPC("RPC_SetOpponentCount", RpcTarget.Others,
+            PhotonNetwork.LocalPlayer.ActorNumber, _myHand.Count);
+        photonView.RPC("RPC_PlayerReadyToStart", RpcTarget.MasterClient);
+    }
+
     void CheckIfInitialDiscardComplete()
     {
         if (!HasAnyPairs(_myHand))
+            SignalReadyToStart();
+    }
+
+    [PunRPC]
+    void RPC_PlayerReadyToStart()
+    {
+        if (!PhotonNetwork.IsMasterClient) return;
+        _playersReadyCount++;
+        Debug.Log($"[GCNet] Players ready: {_playersReadyCount}/{_totalPlayers}");
+        SetTurnText($"Waiting for players... {_playersReadyCount}/{_totalPlayers} ready");
+    }
+
+    IEnumerator BeginInitialDiscardPhase()
+    {
+        // Reset ready flag for this game
+        _iHaveSignaledReady = false;
+
+        // Give player 1.5 seconds to see their cards
+        yield return new WaitForSeconds(1.5f);
+
+        if (!HasAnyPairs(_myHand))
         {
-            SetTurnText("No more pairs! Waiting for other players...");
-            photonView.RPC("RPC_SetOpponentCount", RpcTarget.Others,
-                PhotonNetwork.LocalPlayer.ActorNumber, _myHand.Count);
-            photonView.RPC("RPC_PlayerReadyToStart", RpcTarget.MasterClient);
+            // No pairs at all - signal ready
+            SignalReadyToStart();
+        }
+        else
+        {
+            EnableInitialPairSelection();
+            SetTurnText("Select your pairs to discard!");
         }
     }
 
@@ -593,7 +607,8 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         foreach (GameObject obj in new[] { obj1, obj2 })
         {
             if (obj == null) continue;
-            obj.transform.SetParent(throwPile.parent, worldPositionStays: true);
+            obj.GetComponent<GCCardDisplay>()?.FlipFaceUp();
+            obj.transform.SetParent(throwPile, worldPositionStays: true);
             StartCoroutine(obj.GetComponent<GCCardDisplay>()
                 ?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
                 ?? EmptyCoroutine());
@@ -633,9 +648,8 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
                 // Spawn 2 temporary face-down cards and slide to pile
                 for (int i = 0; i < 2; i++)
                 {
-                    GameObject tmp = Instantiate(cardPrefab, handAreas[seat]);
+                    GameObject tmp = Instantiate(cardPrefab, throwPile);
                     tmp.GetComponent<GCCardDisplay>()?.SetupAICard(new Card(rank, "?", null));
-                    tmp.transform.SetParent(throwPile.parent, worldPositionStays: true);
                     StartCoroutine(tmp.GetComponent<GCCardDisplay>()
                         ?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
                         ?? EmptyCoroutine());
@@ -806,7 +820,9 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         foreach (GameObject obj in new[] { obj1, obj2 })
         {
             if (obj == null) continue;
-            obj.transform.SetParent(throwPile.parent, worldPositionStays: true);
+            obj.GetComponent<GCCardDisplay>()?.FlipFaceUp();
+            // Parent to throwPile itself — cards slide to throwPile's center (local 0,0)
+            obj.transform.SetParent(throwPile, worldPositionStays: true);
             StartCoroutine(obj.GetComponent<GCCardDisplay>()
                 ?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
                 ?? EmptyCoroutine());
@@ -815,18 +831,13 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         TintThrowPile(obj1, obj2);
         SetTurnText("Pair discarded! Keep going.");
 
-        // Tell everyone my new count
         photonView.RPC("RPC_SetOpponentCount",
             RpcTarget.Others,
             PhotonNetwork.LocalPlayer.ActorNumber,
             _myHand.Count);
 
         yield return new WaitForSeconds(slideAnimDuration + 0.3f);
-
-        // Rescale remaining cards
         ScaleAllHandCards();
-
-        // Auto-check if all pairs discarded
         CheckIfInitialDiscardComplete();
     }
 
@@ -898,46 +909,55 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
 
     IEnumerator ApplyHandFit(Transform area)
     {
-        yield return null; // wait for RectTransform to update
+        // Wait multiple frames for layout to fully update in all window sizes
+        yield return null;
+        yield return null;
+        yield return new WaitForEndOfFrame();
 
         RectTransform areaRT = area.GetComponent<RectTransform>();
         if (areaRT == null) yield break;
 
-        // Get actual available width
-        float availableW = areaRT.rect.width;
-        if (availableW <= 0) availableW = 1700f; // fallback
-
         int count = area.childCount;
         if (count == 0) yield break;
 
-        // Get card width from first child
+        // Get card width from prefab rect (more reliable than from spawned card)
         RectTransform firstCard = area.GetChild(0).GetComponent<RectTransform>();
-        float cardW = firstCard != null ? firstCard.rect.width : 90f;
-        if (cardW <= 0) cardW = 90f;
+        float cardW = (firstCard != null && firstCard.rect.width > 0)
+            ? firstCard.rect.width : 90f;
 
-        float totalCardW = count * cardW;
+        // Get available width — use canvas width as fallback for windowed mode
+        float availableW = areaRT.rect.width;
+        if (availableW <= 10f)
+        {
+            // Fallback: get from canvas
+            Canvas c = GetComponentInParent<Canvas>();
+            if (c == null) c = FindFirstObjectByType<Canvas>();
+            if (c != null) availableW = ((RectTransform)c.transform).rect.width - 40f;
+            else availableW = Screen.width - 40f;
+        }
 
-        // Calculate spacing needed to fit all cards
+        // Calculate exact spacing to fit all cards in one row
         float spacing;
-        if (count <= 1)
-            spacing = 3f;
-        else if (totalCardW <= availableW)
-            spacing = 3f; // cards fit, use normal spacing
-        else
-            // Negative spacing to overlap cards
-            spacing = (availableW - totalCardW) / (count - 1);
+        float totalW = count * cardW;
+        if (count <= 1) spacing = 3f;
+        else if (totalW <= availableW) spacing = Mathf.Min(5f, (availableW - totalW) / (count - 1));
+        else spacing = (availableW - totalW) / (count - 1);
 
-        // Clamp so cards don't overlap too much (keep at least 20% visible)
-        spacing = Mathf.Max(spacing, -cardW * 0.8f);
+        // Never overlap more than 75% of card width
+        spacing = Mathf.Max(spacing, -cardW * 0.75f);
 
         var hlg = area.GetComponent<UnityEngine.UI.HorizontalLayoutGroup>();
         if (hlg != null)
         {
             hlg.spacing = spacing;
             hlg.childAlignment = TextAnchor.MiddleCenter;
+            hlg.childForceExpandWidth = false;
+            hlg.childForceExpandHeight = false;
+            hlg.childControlWidth = false;
+            hlg.childControlHeight = false;
         }
 
-        // Reset all card scales to 1 — spacing handles the fit, not scale
+        // Keep cards at full scale — spacing handles fit
         foreach (Transform child in area)
             child.localScale = Vector3.one;
     }
@@ -1064,10 +1084,26 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
     void TintThrowPile(GameObject newA, GameObject newB)
     {
         Color yellow = new Color(1f, 0.95f, 0.75f, 1f);
-        if (_lastThrownA != null) { var img = _lastThrownA.GetComponent<Image>(); if (img) img.color = yellow; }
-        if (_lastThrownB != null) { var img = _lastThrownB.GetComponent<Image>(); if (img) img.color = yellow; }
-        if (newA != null) { var img = newA.GetComponent<Image>(); if (img) img.color = Color.white; }
-        if (newB != null) { var img = newB.GetComponent<Image>(); if (img) img.color = Color.white; }
+        if (_lastThrownA != null)
+        {
+            var disp = _lastThrownA.GetComponent<GCCardDisplay>();
+            if (disp?.myImage != null) disp.myImage.color = yellow;
+        }
+        if (_lastThrownB != null)
+        {
+            var disp = _lastThrownB.GetComponent<GCCardDisplay>();
+            if (disp?.myImage != null) disp.myImage.color = yellow;
+        }
+        if (newA != null)
+        {
+            var disp = newA.GetComponent<GCCardDisplay>();
+            if (disp?.myImage != null) disp.myImage.color = Color.white;
+        }
+        if (newB != null)
+        {
+            var disp = newB.GetComponent<GCCardDisplay>();
+            if (disp?.myImage != null) disp.myImage.color = Color.white;
+        }
         _lastThrownA = newA;
         _lastThrownB = newB;
     }
@@ -1078,9 +1114,8 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
     {
         if (throwPile == null) return;
         var toDestroy = new List<GameObject>();
-        foreach (Transform child in throwPile.parent)
+        foreach (Transform child in throwPile)
         {
-            if (child == throwPile.transform) continue;
             if (child.GetComponent<GCCardDisplay>() != null)
                 toDestroy.Add(child.gameObject);
         }

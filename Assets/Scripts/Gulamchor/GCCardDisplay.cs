@@ -15,15 +15,13 @@ public class GCCardDisplay : MonoBehaviour,
     private GCGameManager _manager;
     private bool _isPickable = false;
     private bool _isDraggable = false;
-    private bool _isGameplayPair = false; // drags partner too
+    private bool _isGameplayPair = false;
     private int _handIndex = -1;
     private Button _button;
 
-    // Partner card that moves with this one during drag
     private GCCardDisplay _dragPartner = null;
     private Vector3 _partnerOffset = Vector3.zero;
 
-    // Drag state
     private RectTransform _rectTransform;
     private Canvas _canvas;
     private Vector3 _originalPosition;
@@ -106,7 +104,6 @@ public class GCCardDisplay : MonoBehaviour,
         if (_button != null) _button.interactable = true;
     }
 
-    // Gameplay pair — click OR drag both together
     public void SetupGameplayPair(Card c, GCGameManager manager, GCCardDisplay partner)
     {
         cardData = c;
@@ -124,7 +121,6 @@ public class GCCardDisplay : MonoBehaviour,
         }
     }
 
-    // Initial deal pairs — drag only self (partner handled separately)
     public void SetupDraggablePair(Card c, GCGameManager manager)
     {
         cardData = c;
@@ -142,7 +138,6 @@ public class GCCardDisplay : MonoBehaviour,
         }
     }
 
-    // Click only — no drag
     public void SetupSelectablePair(Card c, GCGameManager manager, int handIndex)
     {
         cardData = c;
@@ -179,11 +174,7 @@ public class GCCardDisplay : MonoBehaviour,
         }
     }
 
-    // Set the drag partner (called after both pair cards are spawned)
-    public void SetDragPartner(GCCardDisplay partner)
-    {
-        _dragPartner = partner;
-    }
+    public void SetDragPartner(GCCardDisplay partner) { _dragPartner = partner; }
 
     // ── Drag handlers ─────────────────────────────────────────────────────────
 
@@ -195,18 +186,18 @@ public class GCCardDisplay : MonoBehaviour,
         _originalParent = transform.parent;
         _originalSiblingIndex = transform.GetSiblingIndex();
 
-        // Bring to top
+        // Find canvas
+        if (_canvas == null) _canvas = GetComponentInParent<Canvas>();
+
         transform.SetParent(_canvas.transform, worldPositionStays: true);
         transform.SetAsLastSibling();
         if (myImage != null) myImage.raycastTarget = false;
 
-        // Also bring partner card along
         if (_isGameplayPair && _dragPartner != null)
         {
             _partnerOriginalPosition = _dragPartner._rectTransform.position;
             _partnerOriginalParent = _dragPartner.transform.parent;
             _partnerOffset = _dragPartner._rectTransform.position - _rectTransform.position;
-
             _dragPartner.transform.SetParent(_canvas.transform, worldPositionStays: true);
             _dragPartner.transform.SetAsLastSibling();
             if (_dragPartner.myImage != null) _dragPartner.myImage.raycastTarget = false;
@@ -216,10 +207,7 @@ public class GCCardDisplay : MonoBehaviour,
     public void OnDrag(PointerEventData eventData)
     {
         if (!_isDraggable) return;
-
         _rectTransform.position += new Vector3(eventData.delta.x, eventData.delta.y, 0f);
-
-        // Move partner with fixed offset
         if (_isGameplayPair && _dragPartner != null)
             _dragPartner._rectTransform.position = _rectTransform.position + _partnerOffset;
     }
@@ -227,24 +215,19 @@ public class GCCardDisplay : MonoBehaviour,
     public void OnEndDrag(PointerEventData eventData)
     {
         if (!_isDraggable || _manager == null) return;
-
         if (myImage != null) myImage.raycastTarget = true;
         if (_dragPartner?.myImage != null) _dragPartner.myImage.raycastTarget = true;
 
         bool droppedOnPile = _manager.IsOverThrowPile(_rectTransform.position);
-
         if (droppedOnPile)
         {
-            // Trigger pair discard
             _manager.OnPairCardSelected(cardData);
         }
         else
         {
-            // Snap both back
             transform.SetParent(_originalParent, worldPositionStays: true);
             transform.SetSiblingIndex(_originalSiblingIndex);
             _rectTransform.position = _originalPosition;
-
             if (_isGameplayPair && _dragPartner != null)
             {
                 _dragPartner.transform.SetParent(_partnerOriginalParent, worldPositionStays: true);
@@ -254,6 +237,9 @@ public class GCCardDisplay : MonoBehaviour,
     }
 
     // ── Slide to throw pile ───────────────────────────────────────────────────
+    // throwPile is the RectTransform of the pile container.
+    // Since cards are now children of throwPile, we animate to local position
+    // (scatter offset from center) rather than world position.
 
     public IEnumerator SlideToCenter(RectTransform throwPile, float duration = 0.35f,
                                      float scatterX = 150f, float scatterY = 80f)
@@ -263,12 +249,26 @@ public class GCCardDisplay : MonoBehaviour,
 
         FlipFaceUp();
 
-        Vector3 startPos = rt.position;
-        Vector3 scatter = new Vector3(
+        // Start position in world space
+        Vector3 startWorldPos = rt.position;
+
+        // Target: throwPile center + random scatter in local space
+        // Convert scatter local offset to world space
+        Vector3 scatterLocal = new Vector3(
             Random.Range(-scatterX, scatterX),
-            Random.Range(-scatterY, scatterY), 0f);
-        Vector3 targetPos = throwPile.position + scatter;
-        float targetRot = Random.Range(-45f, 45f);
+            Random.Range(-scatterY, scatterY),
+            0f);
+
+        // If card is child of throwPile, target is local scatterLocal
+        // If not, target is throwPile.position + scatter
+        Vector3 targetWorldPos;
+        if (rt.parent == throwPile)
+            // Card is child of throwPile — animate from current world pos to pile center + scatter
+            targetWorldPos = throwPile.position + scatterLocal;
+        else
+            targetWorldPos = throwPile.position + scatterLocal;
+
+        float targetRot = Random.Range(-30f, 30f);
         float startRot = rt.eulerAngles.z;
 
         float elapsed = 0f;
@@ -276,11 +276,11 @@ public class GCCardDisplay : MonoBehaviour,
         {
             elapsed += Time.deltaTime;
             float t = Mathf.SmoothStep(0f, 1f, elapsed / duration);
-            rt.position = Vector3.Lerp(startPos, targetPos, t);
+            rt.position = Vector3.Lerp(startWorldPos, targetWorldPos, t);
             rt.rotation = Quaternion.Euler(0f, 0f, Mathf.LerpAngle(startRot, targetRot, t));
             yield return null;
         }
-        rt.position = targetPos;
+        rt.position = targetWorldPos;
         rt.rotation = Quaternion.Euler(0f, 0f, targetRot);
     }
 
@@ -296,19 +296,9 @@ public class GCCardDisplay : MonoBehaviour,
         float half = duration / 2f;
         float elapsed = 0f;
 
-        while (elapsed < half)
-        {
-            elapsed += Time.deltaTime;
-            rt.localScale = Vector3.Lerp(originalScale, popScale, elapsed / half);
-            yield return null;
-        }
+        while (elapsed < half) { elapsed += Time.deltaTime; rt.localScale = Vector3.Lerp(originalScale, popScale, elapsed / half); yield return null; }
         elapsed = 0f;
-        while (elapsed < half)
-        {
-            elapsed += Time.deltaTime;
-            rt.localScale = Vector3.Lerp(popScale, originalScale, elapsed / half);
-            yield return null;
-        }
+        while (elapsed < half) { elapsed += Time.deltaTime; rt.localScale = Vector3.Lerp(popScale, originalScale, elapsed / half); yield return null; }
         rt.localScale = originalScale;
     }
 
@@ -330,11 +320,7 @@ public class GCCardDisplay : MonoBehaviour,
 
     private void ApplySprite(Sprite sprite)
     {
-        if (myImage == null)
-        {
-            Debug.LogError("[GCCardDisplay] myImage is NULL!");
-            return;
-        }
+        if (myImage == null) { Debug.LogError("[GCCardDisplay] myImage is NULL!"); return; }
         myImage.sprite = sprite;
         myImage.color = Color.white;
         myImage.enabled = true;
