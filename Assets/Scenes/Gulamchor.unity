@@ -165,6 +165,7 @@ GameObject:
   - component: {fileID: 197628770}
   - component: {fileID: 197628772}
   - component: {fileID: 197628771}
+  - component: {fileID: 197628773}
   m_Layer: 5
   m_Name: GameoverPanel
   m_TagString: Untagged
@@ -234,6 +235,29 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 197628769}
   m_CullTransparentMesh: 1
+--- !u!223 &197628773
+Canvas:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 197628769}
+  m_Enabled: 1
+  serializedVersion: 3
+  m_RenderMode: 2
+  m_Camera: {fileID: 0}
+  m_PlaneDistance: 100
+  m_PixelPerfect: 0
+  m_ReceivesEvents: 1
+  m_OverrideSorting: 1
+  m_OverridePixelPerfect: 0
+  m_SortingBucketNormalizedSize: 0
+  m_VertexColorAlwaysGammaSpace: 0
+  m_AdditionalShaderChannelsFlag: 0
+  m_UpdateRectTransformForStandalone: 0
+  m_SortingLayerID: 0
+  m_SortingOrder: 10
+  m_TargetDisplay: 0
 --- !u!1 &204557009
 GameObject:
   m_ObjectHideFlags: 0
@@ -2786,11 +2810,11 @@ MonoBehaviour:
   dropRadius: 200
   turnText: {fileID: 208527253}
   playerCardCountLabels: []
-  gameOverPanel: {fileID: 0}
-  gameOverTitle: {fileID: 0}
-  gameOverDetails: {fileID: 0}
-  restartButton: {fileID: 0}
-  mainMenuButton: {fileID: 0}
+  gameOverPanel: {fileID: 197628769}
+  gameOverTitle: {fileID: 1039407714}
+  gameOverDetails: {fileID: 655477724}
+  restartButton: {fileID: 883639463}
+  mainMenuButton: {fileID: 2040800763}
   dealShowDuration: 1.2
   aiThinkDelay: 1.1
   aiPickDelay: 1.2

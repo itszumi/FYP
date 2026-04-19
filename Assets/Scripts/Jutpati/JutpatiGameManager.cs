@@ -1,9 +1,10 @@
-﻿
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
+using UnityEngine.SceneManagement;
 
 public class JutpatiGameManager : MonoBehaviour
 {
@@ -15,6 +16,13 @@ public class JutpatiGameManager : MonoBehaviour
     public Transform discardFloor;
     public Transform jokerArea;
     public Text turnStatusText;
+
+    [Header("Game Over Panel")]
+    public GameObject gameOverPanel;
+    public TextMeshProUGUI gameOverTitle;
+    public TextMeshProUGUI gameOverDetail;
+    public Button restartBtn;
+    public Button homeBtn;
 
     private List<List<Card>> allHands = new List<List<Card>>();
     private List<Dictionary<Card, GameObject>> allHandUI = new List<Dictionary<Card, GameObject>>();
@@ -30,7 +38,16 @@ public class JutpatiGameManager : MonoBehaviour
     public float discardRadius = 70f;
     public Color discardHighlight = new Color(1f, 1f, 0.8f, 1f);
 
-    void Start() { SetupGame(); }
+    void Start()
+    {
+        if (gameOverPanel) gameOverPanel.SetActive(false);
+        SetupGame();
+    }
+
+    public void GoToMenu()
+    {
+        SceneManager.LoadScene("Menu");
+    }
 
     public void SetupGame()
     {
@@ -39,9 +56,11 @@ public class JutpatiGameManager : MonoBehaviour
         hasDrawn = false;
         currentPlayerIndex = 0;
         selectedCard = null;
-        turnStatusText.text = "";
+        if (turnStatusText) turnStatusText.text = "";
+        if (gameOverPanel) gameOverPanel.SetActive(false);
 
-        foreach (var area in handAreas) { foreach (Transform child in area) Destroy(child.gameObject); }
+        foreach (var area in handAreas)
+            foreach (Transform child in area) Destroy(child.gameObject);
         foreach (Transform child in discardFloor) Destroy(child.gameObject);
         foreach (Transform child in jokerArea) Destroy(child.gameObject);
 
@@ -54,7 +73,7 @@ public class JutpatiGameManager : MonoBehaviour
         {
             allHands.Add(new List<Card>());
             allHandUI.Add(new Dictionary<Card, GameObject>());
-            for (int j = 0; j < 7; j++) { AddCardToHand(i, DrawCardForGame()); }
+            for (int j = 0; j < 7; j++) AddCardToHand(i, DrawCardForGame());
         }
 
         jokerCard = DrawCardForGame();
@@ -63,7 +82,8 @@ public class JutpatiGameManager : MonoBehaviour
         UpdateTurnUI();
     }
 
-    // Draw a card, reshuffling discard pile if needed
+    // ── Draw ─────────────────────────────────────────────────────────────────
+
     Card DrawCardForGame()
     {
         if (deck.CardsRemaining == 0 && deck.DiscardCount > 0)
@@ -71,19 +91,14 @@ public class JutpatiGameManager : MonoBehaviour
             deck.ReshuffleFromDiscard();
             ClearDiscardFloor();
         }
-
         return deck.DrawCard();
     }
+
     Card GetBotDiscardCard(int botIndex)
     {
         string jRank = jokerCard.rank;
-
-        // Try to discard a non-joker card first
         Card nonJoker = allHands[botIndex].FirstOrDefault(c => c.rank != jRank);
-        if (nonJoker != null) return nonJoker;
-
-        // If hand is only jokers, discard first one
-        return allHands[botIndex][0];
+        return nonJoker ?? allHands[botIndex][0];
     }
 
     void ClearDiscardFloor()
@@ -101,21 +116,15 @@ public class JutpatiGameManager : MonoBehaviour
     void AddCardToHand(int playerIndex, Card c)
     {
         if (c == null) return;
-
         allHands[playerIndex].Add(c);
-
         GameObject newCardObj = Instantiate(cardPrefab, handAreas[playerIndex]);
         CardDisplay display = newCardObj.GetComponent<CardDisplay>();
-
-        if (display == null)
-        {
-            Debug.LogError("CardDisplay missing on cardPrefab used in Jutpati!");
-            return;
-        }
-
+        if (display == null) { Debug.LogError("CardDisplay missing!"); return; }
         display.Setup(c, this, (playerIndex == 0), (playerIndex == 0));
         allHandUI[playerIndex].Add(c, newCardObj);
     }
+
+    // ── Player actions ────────────────────────────────────────────────────────
 
     public void OnDrawButtonClicked()
     {
@@ -123,15 +132,16 @@ public class JutpatiGameManager : MonoBehaviour
         AddCardToHand(0, DrawCardForGame());
         hasDrawn = true;
         SortPlayerHand();
-        if (CheckWin(0)) EndGame("JUTPATTI! YOU WIN!");
+        if (CheckWin(0)) EndGame(true, -1);
         else UpdateTurnUI();
     }
 
     public void OnDiscardPileClicked(CardDisplay floorCard)
     {
         if (gameEnded || currentPlayerIndex != 0 || hasDrawn || floorCard != lastDiscardedDisplay) return;
-
-        if (allHands[0].Any(c => c.rank == floorCard.cardData.rank || c.rank == jokerCard.rank || floorCard.cardData.rank == jokerCard.rank))
+        if (allHands[0].Any(c => c.rank == floorCard.cardData.rank
+                              || c.rank == jokerCard.rank
+                              || floorCard.cardData.rank == jokerCard.rank))
         {
             Card cData = floorCard.cardData;
             deck.RemoveFromDiscard(cData);
@@ -140,7 +150,7 @@ public class JutpatiGameManager : MonoBehaviour
             AddCardToHand(0, cData);
             hasDrawn = true;
             SortPlayerHand();
-            if (CheckWin(0)) EndGame("JUTPATTI! YOU WIN!");
+            if (CheckWin(0)) EndGame(true, -1);
             else UpdateTurnUI();
         }
     }
@@ -149,7 +159,6 @@ public class JutpatiGameManager : MonoBehaviour
     {
         if (gameEnded || currentPlayerIndex != 0 || !hasDrawn) return;
         selectedCard = card;
-
         foreach (var ui in allHandUI[0].Values) ui.GetComponent<Image>().color = Color.white;
         allHandUI[0][card].GetComponent<Image>().color = Color.yellow;
     }
@@ -160,7 +169,7 @@ public class JutpatiGameManager : MonoBehaviour
         {
             if (selectedCard.rank == jokerCard.rank)
             {
-                turnStatusText.text = "JOKER CANNOT BE DISCARDED";
+                if (turnStatusText) turnStatusText.text = "JOKER CANNOT BE DISCARDED";
                 return;
             }
             PerformDiscard(0, selectedCard);
@@ -172,11 +181,8 @@ public class JutpatiGameManager : MonoBehaviour
 
     void PerformDiscard(int playerIndex, Card c)
     {
-        if (c.rank == jokerCard.rank)
-        {
-            // Joker can never be thrown
-            return;
-        }
+        if (c.rank == jokerCard.rank) return;
+
         allHands[playerIndex].Remove(c);
         if (allHandUI[playerIndex].ContainsKey(c))
         {
@@ -191,7 +197,6 @@ public class JutpatiGameManager : MonoBehaviour
         discardObj.transform.localPosition = new Vector3(offset.x, offset.y, 0);
         discardObj.transform.localRotation = Quaternion.Euler(0, 0, Random.Range(0f, 360f));
 
-        // Remove highlight from previous top discard
         if (lastDiscardedDisplay != null)
         {
             var oldImg = lastDiscardedDisplay.GetComponent<Image>();
@@ -202,31 +207,22 @@ public class JutpatiGameManager : MonoBehaviour
         lastDiscardedDisplay.Setup(c, this, true, true);
         lastDiscardedDisplay.isOnFloor = true;
 
-
         var img = discardObj.GetComponent<Image>();
         if (img != null) img.color = Color.white;
     }
-    // Bot should take discard ONLY if it makes a pair (jut)
+
+    // ── Bot logic ─────────────────────────────────────────────────────────────
+
     bool BotShouldTakeDiscard(int botIndex, Card topCard)
     {
         if (topCard == null) return false;
-
         string jRank = jokerCard.rank;
-
-        // If top card is a joker, bot should only take it if it already has any single card to pair
-        if (topCard.rank == jRank)
-        {
-            return allHands[botIndex].Count > 0;
-        }
-
-        // If bot has same rank -> pair
+        if (topCard.rank == jRank) return allHands[botIndex].Count > 0;
         bool hasSameRank = allHands[botIndex].Any(c => c.rank == topCard.rank);
-
-        // If bot has joker -> can pair with this card
         bool hasJoker = allHands[botIndex].Any(c => c.rank == jRank);
-
         return hasSameRank || hasJoker;
     }
+
     IEnumerator BotTurnsLoop()
     {
         for (int i = 1; i <= 4; i++)
@@ -237,11 +233,9 @@ public class JutpatiGameManager : MonoBehaviour
             UpdateTurnUI();
             yield return new WaitForSeconds(1f);
 
-            // Bot tries to take top discard if matches
             if (lastDiscardedDisplay != null)
             {
                 Card top = lastDiscardedDisplay.cardData;
-
                 if (BotShouldTakeDiscard(i, top))
                 {
                     deck.RemoveFromDiscard(top);
@@ -249,17 +243,11 @@ public class JutpatiGameManager : MonoBehaviour
                     lastDiscardedDisplay = null;
                     AddCardToHand(i, top);
                 }
-                else
-                {
-                    AddCardToHand(i, DrawCardForGame());
-                }
+                else AddCardToHand(i, DrawCardForGame());
             }
-            else
-            {
-                AddCardToHand(i, DrawCardForGame());
-            }
+            else AddCardToHand(i, DrawCardForGame());
 
-            if (CheckWin(i)) { EndGame("BOT " + i + " WINS!"); yield break; }
+            if (CheckWin(i)) { EndGame(false, i); yield break; }
 
             yield return new WaitForSeconds(0.5f);
             PerformDiscard(i, GetBotDiscardCard(i));
@@ -269,14 +257,13 @@ public class JutpatiGameManager : MonoBehaviour
         UpdateTurnUI();
     }
 
+    // ── Win check ─────────────────────────────────────────────────────────────
+
     void SortPlayerHand()
     {
         allHands[0] = allHands[0].OrderBy(c => c.rank).ToList();
         for (int i = 0; i < allHands[0].Count; i++)
-        {
-            Card c = allHands[0][i];
-            allHandUI[0][c].transform.SetSiblingIndex(i);
-        }
+            allHandUI[0][allHands[0][i]].transform.SetSiblingIndex(i);
     }
 
     bool CheckWin(int playerIndex)
@@ -289,52 +276,77 @@ public class JutpatiGameManager : MonoBehaviour
 
         int jokers = 0;
         for (int i = checklist.Count - 1; i >= 0; i--)
-        {
             if (checklist[i] == jRank) { jokers++; checklist.RemoveAt(i); }
-        }
 
         checklist.Sort();
         for (int i = checklist.Count - 2; i >= 0; i--)
-        {
             if (checklist[i] == checklist[i + 1])
             {
                 checklist.RemoveAt(i + 1);
                 checklist.RemoveAt(i);
                 i--;
             }
-        }
 
         if (jokers >= checklist.Count)
-        {
-            int remainingJokers = jokers - checklist.Count;
-            return remainingJokers % 2 == 0;
-        }
+            return (jokers - checklist.Count) % 2 == 0;
 
         return false;
     }
 
-    void EndGame(string message)
+    // ── End game ──────────────────────────────────────────────────────────────
+
+    void EndGame(bool humanWon, int botWinner)
     {
         gameEnded = true;
-        turnStatusText.text = message;
-        turnStatusText.color = Color.yellow;
 
+        // Flip all bot cards face-up
         for (int i = 1; i < 5; i++)
-        {
             foreach (var kvp in allHandUI[i])
                 kvp.Value.GetComponent<Image>().sprite = kvp.Key.cardSprite;
-        }
-        if (message.Contains("YOU WIN"))
+
+        // Coins
+        if (humanWon)
             CurrencyManager.AddCoins(200);
-        else if (message.Contains("BOT"))
+        else
             CurrencyManager.AddCoins(-200);
+
+        // Refresh all coin UI on screen
+        var allCurrencyUI = FindObjectsByType<CurrencyUI>(FindObjectsSortMode.None);
+        foreach (var ui in allCurrencyUI) ui.Refresh();
+
+        // Legacy status text (hide it)
+        if (turnStatusText) turnStatusText.text = "";
+
+        // Show game over panel
+        if (gameOverPanel != null)
+        {
+            gameOverPanel.SetActive(true);
+
+            if (gameOverTitle != null)
+            {
+                gameOverTitle.text = humanWon ? "JUTPATTI!" : $"Bot {botWinner} Wins!";
+                gameOverTitle.color = humanWon
+                    ? new Color(1f, 0.84f, 0f)      // gold
+                    : new Color(1f, 0.35f, 0.35f);   // red
+            }
+
+            if (gameOverDetail != null)
+            {
+                gameOverDetail.text = humanWon
+                    ? "+200 coins! Well played!"
+                    : "-200 coins. Better luck next time!";
+                gameOverDetail.color = humanWon
+                    ? new Color(0.6f, 1f, 0.6f)   // light green
+                    : new Color(1f, 0.7f, 0.7f);   // light red
+            }
+        }
     }
 
     void UpdateTurnUI()
     {
-        if (gameEnded) return;
-        turnStatusText.text = (currentPlayerIndex == 0) ?
-            (hasDrawn ? "YOUR TURN: DISCARD" : "YOUR TURN: DRAW") :
-            $"BOT {currentPlayerIndex} TURN...";
+        if (gameEnded || turnStatusText == null) return;
+        turnStatusText.text = (currentPlayerIndex == 0)
+            ? (hasDrawn ? "YOUR TURN: DISCARD" : "YOUR TURN: DRAW")
+            : $"BOT {currentPlayerIndex} TURN...";
     }
 }
