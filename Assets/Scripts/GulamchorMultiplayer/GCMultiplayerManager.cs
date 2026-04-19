@@ -162,6 +162,7 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
             if (RectTransformUtility.RectangleContainsScreenPoint(rt, mousePos))
             {
                 _pickModeActive = false;
+                GCSoundManager.Instance?.PlayCardPick();
                 StartCoroutine(HandleMyPick(i));
                 return;
             }
@@ -610,6 +611,7 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
 
         TintThrowPile(obj1, obj2);
         SetTurnText($"You discarded a pair of {c1.rank}s!");
+        GCSoundManager.Instance?.PlayDiscard();
 
         // Tell everyone — send rank, suits AND exact new count
         photonView.RPC("RPC_PairDiscarded",
@@ -828,6 +830,7 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
 
         TintThrowPile(obj1, obj2);
         SetTurnText("Pair discarded! Keep going.");
+        GCSoundManager.Instance?.PlayDiscard();
 
         // Single RPC — passes exact count, shows animation, updates UI on all screens
         photonView.RPC("RPC_PairDiscarded",
@@ -1132,7 +1135,7 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
     void GoToMainMenu()
     {
         GCNetworkManager.Instance?.LeaveRoom();
-        SceneManager.LoadScene("MainMenu");
+        SceneManager.LoadScene("Menu");
     }
 
     // ── Photon callbacks ──────────────────────────────────────────────────────

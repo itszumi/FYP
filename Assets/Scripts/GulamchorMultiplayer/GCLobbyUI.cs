@@ -74,6 +74,25 @@ public class GCLobbyUI : MonoBehaviour
 
         if (errorText) errorText.text = "";
 
+        // Style the background canvas to warm dark color
+        var canvasBg = GetComponent<UnityEngine.UI.Image>();
+        if (canvasBg != null)
+            canvasBg.color = new Color(0.08f, 0.08f, 0.14f, 1f);
+
+        // Style waiting panel
+        if (waitingPanel != null)
+        {
+            var img = waitingPanel.GetComponent<UnityEngine.UI.Image>();
+            if (img != null) img.color = new Color(0.12f, 0.10f, 0.06f, 0.97f);
+        }
+
+        // Style main panel
+        if (mainPanel != null)
+        {
+            var img = mainPanel.GetComponent<UnityEngine.UI.Image>();
+            if (img != null) img.color = new Color(0.12f, 0.10f, 0.06f, 0.97f);
+        }
+
         // Pre-fill username from PlayerSession
         if (usernameInput != null && PlayerSession.IsLoggedIn())
             usernameInput.text = PlayerSession.GetUser();
@@ -230,12 +249,31 @@ public class GCLobbyUI : MonoBehaviour
         GameObject row = Instantiate(playerRowPrefab, playersGrid);
         _playerRows[player.ActorNumber] = row;
 
-        // Set name text
+        // Use GCPlayerRow.Setup if available (handles avatar + name)
+        GCPlayerRow gcRow = row.GetComponent<GCPlayerRow>();
+        if (gcRow != null)
+        {
+            gcRow.Setup(player, player.IsLocal);
+            return;
+        }
+
+        // Fallback — set name text directly
         TextMeshProUGUI nameText = row.transform.Find("NameText")?.GetComponent<TextMeshProUGUI>();
         if (nameText != null)
             nameText.text = GetDisplayName(player) +
                 (player.IsMasterClient ? " [Host]" : "") +
                 (player.IsLocal ? " (You)" : "");
+
+        // Fallback avatar
+        Image avatarImg = row.transform.Find("AvatarImage")?.GetComponent<Image>();
+        if (avatarImg != null && AvatarManager.Instance != null)
+        {
+            int idx = 0;
+            if (player.CustomProperties.TryGetValue(GCNetworkManager.PROP_AVATAR, out object avObj))
+                idx = (int)avObj;
+            Sprite spr = AvatarManager.Instance.GetSprite(idx);
+            if (spr != null) avatarImg.sprite = spr;
+        }
     }
 
     void RemovePlayerRow(int actorNumber)
@@ -290,7 +328,26 @@ public class GCLobbyUI : MonoBehaviour
     {
         ShowPanel(waitingPanel);
         if (roomCodeDisplay) roomCodeDisplay.text = $"Room Code: {code}";
-        if (startGameBtn) startGameBtn.gameObject.SetActive(PhotonNetwork.IsMasterClient);
+
+        // Hide Create/Join buttons — player is already in room
+        createRoomBtn?.gameObject.SetActive(false);
+        joinRoomBtn?.gameObject.SetActive(false);
+
+        // Show Start button only for host, hide for others
+        if (startGameBtn)
+            startGameBtn.gameObject.SetActive(PhotonNetwork.IsMasterClient);
+
+        // Update button text based on role
+        UpdateStartButtonLabel();
+    }
+
+    void UpdateStartButtonLabel()
+    {
+        if (startGameBtn == null) return;
+
+        // Change "Create Room" label to "Start Game" for host
+        var btnText = startGameBtn.GetComponentInChildren<TextMeshProUGUI>();
+        if (btnText != null) btnText.text = "Start Game";
     }
 
     void ShowError(string msg)
