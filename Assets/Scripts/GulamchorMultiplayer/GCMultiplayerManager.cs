@@ -289,7 +289,7 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         photonView.RPC("RPC_DealComplete", RpcTarget.All);
 
         // Wait until all players signal ready OR timeout after 120 seconds
-        float timeout = 120f;
+        float timeout = 240f;
         float elapsed = 0f;
         while (_playersReadyCount < _totalPlayers && elapsed < timeout)
         {
@@ -474,17 +474,9 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         bool iAmPicker = pickerActor == PhotonNetwork.LocalPlayer.ActorNumber;
         bool iAmSource = fromActor == PhotonNetwork.LocalPlayer.ActorNumber;
 
-        // Update opponent UI for the source player (remove one face-down card)
-        if (!iAmSource)
+        if (iAmSource)
         {
-            if (_opponentCardCounts.ContainsKey(fromActor))
-                _opponentCardCounts[fromActor] = Mathf.Max(0, _opponentCardCounts[fromActor] - 1);
-            RebuildOpponentUI(fromActor, _opponentCardCounts.ContainsKey(fromActor)
-                ? _opponentCardCounts[fromActor] : 0);
-        }
-        else
-        {
-            // I am the source — remove card from my hand at cardIndex and send it
+            // Remove card from my hand and send to picker
             if (cardIndex < _myHand.Count)
             {
                 Card sent = _myHand[cardIndex];
@@ -494,25 +486,27 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
                     Destroy(_myHandUI[sent]);
                     _myHandUI.Remove(sent);
                 }
-                // Tell picker what card they got
+                ScaleAllHandCards();
+
                 photonView.RPC("RPC_ReceivePickedCard",
                     GetPhotonPlayer(pickerActor),
                     sent.rank, sent.suit);
+
+                // Tell everyone my EXACT new count (single source of truth)
+                photonView.RPC("RPC_SetOpponentCount", RpcTarget.Others,
+                    PhotonNetwork.LocalPlayer.ActorNumber, _myHand.Count);
             }
         }
-
-        // Update pickers opponent UI (add one card to picker) — handled in ReceivePickedCard
-        if (!iAmPicker && !iAmSource)
+        else if (!iAmPicker)
         {
-            // I'm a spectator — update picker's count
-            if (_opponentCardCounts.ContainsKey(pickerActor))
-                _opponentCardCounts[pickerActor]++;
-            // Don't rebuild yet — wait for pair resolution
+            // I'm a spectator — source sends exact count via RPC_SetOpponentCount
+            // Don't decrement here — wait for SetOpponentCount RPC which has exact value
+            // Just update the display text
         }
+        // Note: picker's hand will be updated in RPC_ReceivePickedCard
 
-        string pickerName = GetActorDisplayName(pickerActor);
         if (!iAmPicker)
-            SetTurnText($"{pickerName} picked a card from {GetActorDisplayName(fromActor)}");
+            SetTurnText($"{GetActorDisplayName(pickerActor)} picked a card from {GetActorDisplayName(fromActor)}");
 
         UpdateCardCountLabels();
     }
@@ -617,11 +611,11 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         TintThrowPile(obj1, obj2);
         SetTurnText($"You discarded a pair of {c1.rank}s!");
 
-        // Tell everyone about the discard
+        // Tell everyone — send rank, suits AND exact new count
         photonView.RPC("RPC_PairDiscarded",
             RpcTarget.All,
             PhotonNetwork.LocalPlayer.ActorNumber,
-            c1.rank);
+            c1.rank, c1.suit, c2.suit, _myHand.Count);
 
         yield return new WaitForSeconds(slideAnimDuration + 0.4f);
         FinishMyTurn(hasPair: true);
@@ -630,35 +624,39 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
     // ── RPC: Pair discarded (runs on ALL clients) ─────────────────────────────
 
     [PunRPC]
-    void RPC_PairDiscarded(int actorNumber, string rank)
+    void RPC_PairDiscarded(int actorNumber, string rank, string suit1, string suit2, int exactNewCount)
     {
         bool isMe = actorNumber == PhotonNetwork.LocalPlayer.ActorNumber;
         if (!isMe)
         {
-            // Reduce opponent count by 2
-            if (_opponentCardCounts.ContainsKey(actorNumber))
-                _opponentCardCounts[actorNumber] = Mathf.Max(0,
-                    _opponentCardCounts[actorNumber] - 2);
-            RebuildOpponentUI(actorNumber, _opponentCardCounts[actorNumber]);
+            // Set EXACT count — never decrement (avoids double-counting bugs)
+            _opponentCardCounts[actorNumber] = exactNewCount;
+            RebuildOpponentUI(actorNumber, exactNewCount);
 
-            // Show two face-down cards flying to pile from opponent area
-            int seat = _actorToSeat.ContainsKey(actorNumber) ? _actorToSeat[actorNumber] : -1;
-            if (seat > 0 && seat < handAreas.Length)
+            // Show 2 face-UP cards animating to throw pile
+            Card c1 = DeserializeCard(rank, suit1);
+            Card c2 = DeserializeCard(rank, suit2);
+
+            GameObject lastA = null, lastB = null;
+            foreach (Card c in new[] { c1, c2 })
             {
-                // Spawn 2 temporary face-down cards and slide to pile
-                for (int i = 0; i < 2; i++)
+                if (c == null) continue;
+                GameObject tmp = Instantiate(cardPrefab, throwPile);
+                GCCardDisplay disp = tmp.GetComponent<GCCardDisplay>();
+                if (disp != null)
                 {
-                    GameObject tmp = Instantiate(cardPrefab, throwPile);
-                    tmp.GetComponent<GCCardDisplay>()?.SetupAICard(new Card(rank, "?", null));
-                    StartCoroutine(tmp.GetComponent<GCCardDisplay>()
-                        ?.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY)
-                        ?? EmptyCoroutine());
+                    disp.SetupFaceUp(c, null);
+                    RectTransform rt = tmp.GetComponent<RectTransform>();
+                    if (rt != null) rt.anchoredPosition = new Vector2(
+                        Random.Range(-200f, 200f), Random.Range(-100f, 100f));
+                    StartCoroutine(disp.SlideToCenter(throwPile, slideAnimDuration, scatterX, scatterY));
                 }
+                if (lastA == null) lastA = tmp; else lastB = tmp;
             }
-        }
+            TintThrowPile(lastA, lastB);
 
-        string name = GetActorDisplayName(actorNumber);
-        if (!isMe) SetTurnText($"{name} discarded a pair of {rank}s!");
+            SetTurnText($"{GetActorDisplayName(actorNumber)} discarded a pair of {rank}s!");
+        }
 
         UpdateCardCountLabels();
     }
@@ -831,10 +829,11 @@ public class GCMultiplayerManager : MonoBehaviourPunCallbacks
         TintThrowPile(obj1, obj2);
         SetTurnText("Pair discarded! Keep going.");
 
-        photonView.RPC("RPC_SetOpponentCount",
+        // Single RPC — passes exact count, shows animation, updates UI on all screens
+        photonView.RPC("RPC_PairDiscarded",
             RpcTarget.Others,
             PhotonNetwork.LocalPlayer.ActorNumber,
-            _myHand.Count);
+            c1.rank, c1.suit, c2.suit, _myHand.Count);
 
         yield return new WaitForSeconds(slideAnimDuration + 0.3f);
         ScaleAllHandCards();
