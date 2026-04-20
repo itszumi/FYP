@@ -28,7 +28,7 @@ using Photon.Pun;
 using Photon.Realtime;
 using Hashtable = ExitGames.Client.Photon.Hashtable;
 
-public class GCLobbyUI : MonoBehaviour
+public class GCLobbyUi : MonoBehaviour
 {
     [Header("Panels")]
     public GameObject mainPanel;
@@ -56,6 +56,12 @@ public class GCLobbyUI : MonoBehaviour
     [Header("Player Row Prefab")]
     public GameObject playerRowPrefab; // has a TMP text child named "NameText"
 
+    [Header("Network Manager (drag NetworkManager GO here)")]
+    public GCNetworkManager networkManager;
+
+    // Private cache — not affected by DontDestroyOnLoad nullification
+    private static GCNetworkManager _cachedNetMgr;
+
     [Header("Scene")]
     public string mainMenuScene = "MainMenu";
 
@@ -74,19 +80,14 @@ public class GCLobbyUI : MonoBehaviour
 
         if (errorText) errorText.text = "";
 
-        // Style the background canvas to warm dark color
+        // Style panels
         var canvasBg = GetComponent<UnityEngine.UI.Image>();
-        if (canvasBg != null)
-            canvasBg.color = new Color(0.08f, 0.08f, 0.14f, 1f);
-
-        // Style waiting panel
+        if (canvasBg != null) canvasBg.color = new Color(0.08f, 0.08f, 0.14f, 1f);
         if (waitingPanel != null)
         {
             var img = waitingPanel.GetComponent<UnityEngine.UI.Image>();
             if (img != null) img.color = new Color(0.12f, 0.10f, 0.06f, 0.97f);
         }
-
-        // Style main panel
         if (mainPanel != null)
         {
             var img = mainPanel.GetComponent<UnityEngine.UI.Image>();
@@ -97,6 +98,9 @@ public class GCLobbyUI : MonoBehaviour
         if (usernameInput != null && PlayerSession.IsLoggedIn())
             usernameInput.text = PlayerSession.GetUser();
 
+        Debug.Log("[GCLobby] Start — Instance is: " + (GCNetworkManager.Instance == null ? "NULL" : GCNetworkManager.Instance.gameObject.name));
+        Debug.Log("[GCLobby] Start — networkManager field is: " + (networkManager == null ? "NULL" : networkManager.gameObject.name));
+
         // Wire buttons
         createRoomBtn?.onClick.AddListener(OnCreateRoom);
         joinRoomBtn?.onClick.AddListener(OnJoinRoom);
@@ -104,20 +108,68 @@ public class GCLobbyUI : MonoBehaviour
         startGameBtn?.onClick.AddListener(OnStartGame);
         leaveBtn?.onClick.AddListener(OnLeaveRoom);
 
-        // Wire network manager callbacks
-        if (GCNetworkManager.Instance != null)
+        // Wire NetworkManager immediately — try direct field first, then Instance
+        var netMgr = GetNetMgr();
+        if (netMgr != null)
         {
-            GCNetworkManager.Instance.OnConnectionFailedCallback = OnConnectionFailed;
-            GCNetworkManager.Instance.OnRoomCreatedCallback = OnRoomCreated;
-            GCNetworkManager.Instance.OnRoomCreateFailedCallback = OnRoomFailed;
-            GCNetworkManager.Instance.OnRoomJoinedCallback = OnRoomJoined;
-            GCNetworkManager.Instance.OnRoomJoinFailedCallback = OnRoomFailed;
-            GCNetworkManager.Instance.OnPlayerJoinedCallback = OnPlayerJoined;
-            GCNetworkManager.Instance.OnPlayerLeftCallback = OnPlayerLeft;
-            GCNetworkManager.Instance.OnGameStartingCallback = OnGameStarting;
+            networkManager = netMgr;
+            WireCallbacks(netMgr);
+            Debug.Log("[GCLobby] NetworkManager wired in Start: " + netMgr.gameObject.name);
+        }
+        else
+        {
+            // Fallback — wait for it
+            StartCoroutine(WireNetworkManagerDelayed());
         }
 
-        // If already in a room (e.g. scene reloaded), show waiting panel immediately
+        // If already in a room show waiting panel
+        if (PhotonNetwork.InRoom)
+        {
+            ShowWaitingPanel(PhotonNetwork.CurrentRoom.Name);
+            RefreshAllPlayers();
+        }
+    }
+
+    void WireCallbacks(GCNetworkManager netMgr)
+    {
+        netMgr.OnConnectionFailedCallback = OnConnectionFailed;
+        netMgr.OnRoomCreatedCallback = OnRoomCreated;
+        netMgr.OnRoomCreateFailedCallback = OnRoomFailed;
+        netMgr.OnRoomJoinedCallback = OnRoomJoined;
+        netMgr.OnRoomJoinFailedCallback = OnRoomFailed;
+        netMgr.OnPlayerJoinedCallback = OnPlayerJoined;
+        netMgr.OnPlayerLeftCallback = OnPlayerLeft;
+        netMgr.OnGameStartingCallback = OnGameStarting;
+    }
+
+    System.Collections.IEnumerator WireNetworkManagerDelayed()
+    {
+        // Wait up to 3 seconds for GCNetworkManager to be available
+        float timeout = 3f;
+        float elapsed = 0f;
+        GCNetworkManager netMgr = null;
+
+        while (netMgr == null && elapsed < timeout)
+        {
+            netMgr = GetNetMgr();
+            if (netMgr == null)
+            {
+                yield return null;
+                elapsed += Time.deltaTime;
+            }
+        }
+
+        if (netMgr == null)
+        {
+            Debug.LogError("[GCLobby] GCNetworkManager not found after waiting! Check scene setup.");
+            yield break;
+        }
+
+        // Save reference
+        networkManager = netMgr;
+        WireCallbacks(netMgr);
+        Debug.Log("[GCLobby] NetworkManager wired via coroutine: " + netMgr.gameObject.name);
+
         if (PhotonNetwork.InRoom)
         {
             ShowWaitingPanel(PhotonNetwork.CurrentRoom.Name);
@@ -147,10 +199,11 @@ public class GCLobbyUI : MonoBehaviour
     {
         string username = GetUsername();
         if (username == null) return;
-
+        var netMgr = GetNetMgr();
+        if (netMgr == null) { ShowError("NetworkManager not found!"); return; }
         string code = GCNetworkManager.GenerateRoomCode();
         ShowLoading($"Creating room {code}...");
-        GCNetworkManager.Instance.ConnectAndCreateRoom(code, username,
+        netMgr.ConnectAndCreateRoom(code, username,
             PlayerSession.IsLoggedIn() ? PlayerSession.GetAvatarIndex() : 0);
     }
 
@@ -158,12 +211,12 @@ public class GCLobbyUI : MonoBehaviour
     {
         string username = GetUsername();
         if (username == null) return;
-
         string code = joinCodeInput?.text.Trim().ToUpper() ?? "";
         if (code.Length != 4) { ShowError("Enter a 4-character room code."); return; }
-
+        var netMgr = GetNetMgr();
+        if (netMgr == null) { ShowError("NetworkManager not found!"); return; }
         ShowLoading($"Joining room {code}...");
-        GCNetworkManager.Instance.ConnectAndJoinRoom(code, username,
+        netMgr.ConnectAndJoinRoom(code, username,
             PlayerSession.IsLoggedIn() ? PlayerSession.GetAvatarIndex() : 0);
     }
 
@@ -297,15 +350,19 @@ public class GCLobbyUI : MonoBehaviour
         bool enoughPlayers = PhotonNetwork.CurrentRoom != null &&
             PhotonNetwork.CurrentRoom.PlayerCount >=
             (GCNetworkManager.Instance?.minPlayersToStart ?? 2);
+
         startGameBtn.gameObject.SetActive(isMaster);
-        startGameBtn.interactable = isMaster && enoughPlayers;
+        startGameBtn.interactable = enoughPlayers;
+
+        var btnText = startGameBtn.GetComponentInChildren<TextMeshProUGUI>();
+        if (btnText != null) btnText.text = "Start Game";
 
         if (isMaster)
             ShowStatusText(enoughPlayers
-                ? "Ready to start! Press Start Game."
-                : $"Waiting for players... ({PhotonNetwork.CurrentRoom.PlayerCount}/{GCNetworkManager.Instance?.maxPlayers ?? 5})");
+                ? "All players ready! Press Start Game."
+                : $"Waiting for players... ({PhotonNetwork.CurrentRoom?.PlayerCount ?? 0}/{GCNetworkManager.Instance?.maxPlayers ?? 5})");
         else
-            ShowStatusText($"Waiting for host to start... ({PhotonNetwork.CurrentRoom.PlayerCount}/{GCNetworkManager.Instance?.maxPlayers ?? 5})");
+            ShowStatusText($"Waiting for host to start... ({PhotonNetwork.CurrentRoom?.PlayerCount ?? 0}/{GCNetworkManager.Instance?.maxPlayers ?? 5})");
     }
 
     // ── UI helpers ────────────────────────────────────────────────────────────
@@ -329,25 +386,15 @@ public class GCLobbyUI : MonoBehaviour
         ShowPanel(waitingPanel);
         if (roomCodeDisplay) roomCodeDisplay.text = $"Room Code: {code}";
 
-        // Hide Create/Join buttons — player is already in room
+        // Hide Create/Join — already in room
         createRoomBtn?.gameObject.SetActive(false);
         joinRoomBtn?.gameObject.SetActive(false);
 
-        // Show Start button only for host, hide for others
+        // Show Start only for host
         if (startGameBtn)
             startGameBtn.gameObject.SetActive(PhotonNetwork.IsMasterClient);
 
-        // Update button text based on role
-        UpdateStartButtonLabel();
-    }
-
-    void UpdateStartButtonLabel()
-    {
-        if (startGameBtn == null) return;
-
-        // Change "Create Room" label to "Start Game" for host
-        var btnText = startGameBtn.GetComponentInChildren<TextMeshProUGUI>();
-        if (btnText != null) btnText.text = "Start Game";
+        UpdateStartButton();
     }
 
     void ShowError(string msg)
@@ -361,11 +408,19 @@ public class GCLobbyUI : MonoBehaviour
         if (statusText) statusText.text = msg;
     }
 
+    GCNetworkManager GetNetMgr()
+    {
+        if (GCNetworkManager.Instance != null)
+            return GCNetworkManager.Instance;
+        var found = FindFirstObjectByType<GCNetworkManager>(FindObjectsInactive.Include);
+        Debug.Log("[GCLobby] GetNetMgr: " + (found == null ? "NULL" : found.gameObject.name));
+        return found;
+    }
+
     string GetUsername()
     {
         string name = usernameInput?.text.Trim() ?? "";
         if (string.IsNullOrEmpty(name)) { ShowError("Enter a username."); return null; }
-        if (GCNetworkManager.Instance == null) { ShowError("NetworkManager not found!"); return null; }
         if (errorText) errorText.text = "";
         return name;
     }

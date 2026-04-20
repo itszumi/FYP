@@ -16,8 +16,8 @@ public class GCNetworkManager : MonoBehaviourPunCallbacks
     public static GCNetworkManager Instance { get; private set; }
 
     [Header("Scene Names")]
-    public string lobbyScene = "MultiplayerLobby";
-    public string gameScene = "GulamchorMultiplayer";
+    public string lobbyScene = "GCMultiplayerLobby";
+    public string gameScene = "GCMultiplayer";
 
     [Header("Room Settings")]
     public int maxPlayers = 5;
@@ -52,14 +52,24 @@ public class GCNetworkManager : MonoBehaviourPunCallbacks
 
     void Awake()
     {
-        if (Instance != null && Instance != this) { Destroy(gameObject); return; }
+        Debug.Log($"[GCNet] Awake called. Instance={Instance}, this={this.GetInstanceID()}");
+        if (Instance != null && Instance != this)
+        {
+            Debug.Log("[GCNet] Duplicate detected - destroying this one");
+            Destroy(gameObject);
+            return;
+        }
         Instance = this;
         DontDestroyOnLoad(gameObject);
-
+        Debug.Log($"[GCNet] Instance SET successfully. Scene={UnityEngine.SceneManagement.SceneManager.GetActiveScene().name}");
         PhotonNetwork.AutomaticallySyncScene = true;
     }
 
-    // ── Connection ────────────────────────────────────────────────────────────
+    void OnDestroy()
+    {
+        Debug.LogError("[GCNet] NetworkManager DESTROYED! Instance will be null. Stack: " + System.Environment.StackTrace);
+        if (Instance == this) Instance = null;
+    }
 
     public void ConnectAndCreateRoom(string roomCode, string playerName, int avatarIndex)
     {

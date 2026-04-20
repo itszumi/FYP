@@ -36,6 +36,7 @@ public class HUDController : MonoBehaviour
     [Header("Avatar + Username")]
     public Image avatarImage;
     public TextMeshProUGUI usernameText;
+    public TextMeshProUGUI coinsText;
 
     [Header("Pause Panel")]
     public GameObject pausePanel;
@@ -73,6 +74,19 @@ public class HUDController : MonoBehaviour
     void OnEnable() => SceneManager.sceneLoaded += OnSceneLoaded;
     void OnDisable() => SceneManager.sceneLoaded -= OnSceneLoaded;
 
+    private float _coinRefreshTimer = 0f;
+    void Update()
+    {
+        // Refresh coin display every second
+        _coinRefreshTimer += Time.deltaTime;
+        if (_coinRefreshTimer >= 1f)
+        {
+            _coinRefreshTimer = 0f;
+            if (coinsText != null)
+                coinsText.text = "Coins: " + CurrencyManager.GetCoins();
+        }
+    }
+
     void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
         Time.timeScale = 1f;
@@ -87,8 +101,20 @@ public class HUDController : MonoBehaviour
     {
         string scene = SceneManager.GetActiveScene().name;
         bool loggedIn = PlayerSession.IsLoggedIn();
-        bool hide = IsInList(scene, hiddenScenes);
 
+        // Try to restore session from PlayerPrefs if session was lost
+        if (!loggedIn)
+        {
+            string lastUser = LocalAuth.GetLastUser();
+            if (!string.IsNullOrEmpty(lastUser))
+            {
+                int idx = LocalAuth.GetAvatar(lastUser);
+                PlayerSession.SetUser(lastUser, idx);
+                loggedIn = true;
+            }
+        }
+
+        bool hide = IsInList(scene, hiddenScenes);
         if (hudPanel) hudPanel.SetActive(loggedIn && !hide);
         if (!loggedIn || hide) return;
 
@@ -104,15 +130,18 @@ public class HUDController : MonoBehaviour
         if (usernameText != null)
             usernameText.text = PlayerSession.GetUser();
 
-        // Left button sprite
+        if (coinsText != null)
+            coinsText.text = "Coins: " + CurrencyManager.GetCoins();
+
+        // Left button — only set sprite if NOT currently paused
         bool isMenu = IsInList(scene, menuScenes);
         if (leftBtn != null)
         {
-            // Hide back button on the home scene itself
             bool show = isMenu ? scene != homeScene : true;
             leftBtn.gameObject.SetActive(show);
 
-            if (leftBtnImage != null)
+            // Don't override sprite if paused (would reset resume→pause incorrectly)
+            if (leftBtnImage != null && !_isPaused)
                 leftBtnImage.sprite = isMenu ? backSprite : pauseSprite;
         }
     }
@@ -123,7 +152,6 @@ public class HUDController : MonoBehaviour
     {
         string scene = SceneManager.GetActiveScene().name;
         bool isMenu = IsInList(scene, menuScenes);
-
         if (isMenu) GoBack();
         else TogglePause();
     }
@@ -143,7 +171,9 @@ public class HUDController : MonoBehaviour
         _isPaused = true;
         Time.timeScale = 0f;
         if (pausePanel) pausePanel.SetActive(true);
-        if (leftBtnImage && resumeSprite) leftBtnImage.sprite = resumeSprite;
+        // Only swap sprite — don't touch size
+        if (leftBtnImage != null && resumeSprite != null)
+            leftBtnImage.sprite = resumeSprite;
     }
 
     public void ResumeGame()
@@ -151,7 +181,16 @@ public class HUDController : MonoBehaviour
         _isPaused = false;
         Time.timeScale = 1f;
         if (pausePanel) pausePanel.SetActive(false);
-        if (leftBtnImage && pauseSprite) leftBtnImage.sprite = pauseSprite;
+
+        // Reset button to pause sprite with correct size
+        if (leftBtnImage != null && pauseSprite != null)
+        {
+            leftBtnImage.sprite = pauseSprite;
+            leftBtnImage.SetNativeSize();
+            // Force back to fixed size
+            RectTransform rt = leftBtnImage.GetComponent<RectTransform>();
+            if (rt != null) rt.sizeDelta = new Vector2(65, 65);
+        }
     }
 
     public void RestartGame()
